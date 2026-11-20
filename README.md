@@ -1,26 +1,25 @@
 # Libere
 
-Libere 是面向 Mac 和 iPad 的原生知识笔记应用。将文字、公式、PDF、图片、网页和代码放到同一张自由画布上，从阅读资料到整理思路，再到写作和项目推进。
+**把资料和笔记放在同一页。**
 
-当前版本：**0.6.9（build 21）**。源码以 **PolyForm Noncommercial 1.0.0** 公开（source-available），适用非商业许可。具体授权范围见 [LICENSE](LICENSE)，声明见 [NOTICE](NOTICE)。
+Libere 是一款 Mac 和 iPad 笔记应用。你可以把 PDF、图片、网页和代码放在同一张画布上，在资料旁边写下想法，也可以直接在页面上做批注。内容放哪里、占多大空间，都可以自己调整。
 
-## 可以做什么
+支持 Markdown、公式和手写批注。文件可以展开阅读，也可以收起来；笔记可以按文件夹分类，保存位置由你选择，并支持导出备份。
 
-- **自由画布**：内容块可移动、缩放、折叠和展开；支持选择、撤销、回收站与文件夹层级。
-- **文字与公式**：Markdown 编辑与预览、公式排版、原生文字编辑器和中文输入。
-- **资料阅读与批注**：PDF 翻页，图片和长文档预览，页内文字与手写批注，以及资料旁的文字分支。
-- **文件编辑**：Markdown、HTML、源码和 Jupyter Notebook；Mac 可连接本机 Python 环境执行 Notebook。
-- **文件夹首页**：编辑介绍、分类标题和列表，插入子页面链接组成目录。
-- **资料归档**：保留导入原件，重复使用附件引用；完整备份、本地保存和可选 CloudKit 同步。
-- **Agent 接入**：通过本机 HTTP API 或 MCP stdio 桥接器查找页面、归档内容和整理布局，由用户主动启用。
+## 适合拿来做什么
 
-内置四组可编辑场景：课堂笔记、论文思路与写作、代码库管理、项目管理。共 13 个示例页面，可从“笔记 → 场景展示”进入。
+- **上课记笔记**：把讲义和课堂笔记放在一起，补充老师的解释和自己的疑问。
+- **读论文、写文章**：并排查看资料，记下重点和问题，再整理成写作提纲。
+- **读代码**：把代码文件和解释放在一起，记录实现思路和待解决的问题。
+- **整理项目**：按文件夹收集需求、参考资料、会议记录和下一步计划。
+
+应用内有这四种场景的示例，可以直接打开、修改，试着整理成自己的笔记。
 
 ## 开始使用
 
-运行系统：**macOS 14+** 或 **iPadOS 17+**。Mac 本地构建按当前机器架构生成；本项目的已有 Mac 验证使用 Apple Silicon。
+支持 **macOS 14 及以上**、**iPadOS 17 及以上**。目前需要从源码运行。
 
-在 Mac 安装完整 Xcode 和 Python 3 后，从仓库根目录运行：
+在 Mac 上安装 Xcode 和 Python 3 后，打开终端执行：
 
 ```bash
 git clone https://github.com/aururaning/Libere.git
@@ -28,35 +27,16 @@ cd Libere
 bash Scripts/run-mac.sh
 ```
 
-脚本构建并打开 `.build/XcodeProducts/Debug/Libere.app`。首次启动选择资料库目录；以后可通过“存储位置…”切换。详细环境设置与 iPad 构建见 [构建说明](Docs/BUILD.md)。
+打开后，先选一个文件夹保存笔记，再从菜单 **「笔记 → 场景展示」** 打开示例试用。
 
-若需要生成 Mac 安装包：
+[详细安装步骤与 iPad 配置](Docs/BUILD.md) · [操作说明](Docs/INTERACTION.md)
 
-```bash
-bash Scripts/build-mac-package.sh
-```
+## 反馈与参与
 
-生成文件位于 `dist/`。已发布的安装包以仓库 [Releases](https://github.com/aururaning/Libere/releases) 页面为准。
+遇到问题或有想加的功能，可以到 [Issues](https://github.com/aururaning/Libere/issues) 留言。想参与修改代码，请看 [贡献说明](CONTRIBUTING.md)。
 
-## 常用操作
+## 当前版本与许可
 
-- 单击选择内容块；双击或点击“编辑”输入文字。编辑时也可使用框外拖柄移动。
-- 点击空白或另一个块结束当前编辑；选中块后按 Delete 删除，⌘Z 撤销。
-- 展开附件后可滚动查看内容；最近展开的附件显示在更上层。
-- 阅读器的文字批注通过双击页面空白处添加；手写与文字批注分层保存。
-- 文件夹首页点击“编辑介绍”，添加文字、分类和子页面目录。
+当前版本为 **0.6.9**，仍在开发中。[更新记录](CHANGELOG.md) · [已知限制](Docs/VALIDATION.md)
 
-完整规则见 [交互说明](Docs/INTERACTION.md)。
-
-## 文档与开发
-
-- [构建、测试与打包](Docs/BUILD.md)
-- [验证范围与已知限制](Docs/VALIDATION.md)
-- [Agent API / MCP 接入](Docs/AGENT_API.md)
-- [CloudKit 配置](Docs/ICLOUD.md)
-- [随航与手写输入](Docs/SIDECAR.md)
-- [参与贡献](CONTRIBUTING.md) · [安全反馈](SECURITY.md) · [版本变化](CHANGELOG.md)
-
-项目没有第三方 Swift 包依赖。Notebook 执行另需本机 Python 环境中的 `jupyter_client` 和 `ipykernel`；阅读已保存的 Notebook 不要求启动内核。
-
-当前本地构建使用临时签名，尚未完成 Apple 发行签名和公证。iPad 实机、随航手感和 CloudKit 多设备行为需要对应硬件与账号验证；自动化检查的范围见验证文档。
+源码采用 [PolyForm 非商业许可证](LICENSE) 公开，不授予商业使用权。具体适用范围见许可证原文。
