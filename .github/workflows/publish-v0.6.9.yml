@@ -1,0 +1,67 @@
+name: Publish verified Libere v0.6.9
+
+on:
+  push:
+    branches: [release/v0.6.9]
+    paths: [".release/v0.6.9/**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-libere-v0.6.9
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'aururaning/Libere'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the verified release files
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+
+      - name: Verify installer and release metadata
+        working-directory: .release/v0.6.9
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'd58b413f1e61b9a1b0432575fae8f3cefb0a104630c87ad2132d155ef78f26fb  Libere-0.6.9-arm64.pkg' | sha256sum --check -
+          sha256sum --check Libere-0.6.9-arm64.pkg.sha256
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path("Libere-0.6.9-arm64.pkg")
+          m = json.loads(Path(str(p) + ".manifest.json").read_text())
+          assert p.stat().st_size == m["bytes"] == 4888241
+          assert m["sha256"] == "d58b413f1e61b9a1b0432575fae8f3cefb0a104630c87ad2132d155ef78f26fb"
+          assert m["version"] == "0.6.9" and m["build"] == "21"
+          assert m["architecture"] == ["arm64"] and m["minimumMacOS"] == "14.0"
+          assert m["sourceAppVerified"] and m["packagedAppVerified"]
+          assert m["fileCount"] == 16
+          for name in ("LICENSE", "NOTICE", "THIRD_PARTY_NOTICES.md"):
+              assert "Contents/Resources/" + name in m["files"]
+          PY
+
+      - name: Publish the Mac prerelease
+        working-directory: .release/v0.6.9
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view v0.6.9 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v0.6.9 already exists; refusing to replace it."
+            exit 1
+          fi
+          gh release create v0.6.9 \
+            Libere-0.6.9-arm64.pkg \
+            Libere-0.6.9-arm64.pkg.sha256 \
+            Libere-0.6.9-arm64.pkg.manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --target 482295c55137aca4b87ffa6d712abfa90fb4f7b2 \
+            --title 'Libere v0.6.9 · Mac 测试版' \
+            --notes-file release-notes.md \
+            --prerelease
