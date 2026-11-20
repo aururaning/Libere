@@ -54,4 +54,29 @@ final class PageHierarchyTests: XCTestCase {
         let restored = try JSONDecoder().decode(Workspace.self,from:data)
         XCTAssertEqual(restored,w); XCTAssertNil(restored.notes[0].sidebarOrder); XCTAssertNil(restored.notes[0].trashBatchID)
     }
+    func testMoveTargetsExcludeWholeSubtreeAndDeletedPages() {
+        var (w,a,b,c,d) = tree()
+        var removed = Note(title:"已删除",parent:d); removed.deleted = true; w.notes.append(removed)
+        XCTAssertEqual(w.moveTargets(for:a).map(\.id),[d])
+        XCTAssertEqual(w.moveTargets(for:b).map(\.id),[a,d])
+        XCTAssertTrue(w.moveTargets(for:removed.id).isEmpty)
+        XCTAssertTrue(w.moveTargets(for:UUID()).isEmpty)
+        for source in [a,b,c,d] {
+            XCTAssertEqual(w.moveTargets(for:source).map(\.id),w.notes.filter { !$0.deleted && w.canMove(source,to:$0.id) }.map(\.id))
+        }
+    }
+    func testLargeLibraryTargetsAndDescendantsRemainCycleSafe() {
+        let root = Note(title:"资料库",folder:true), outside = Note(title:"其他项目",folder:true)
+        var pages = [root,outside], parent = root.id
+        for index in 0..<2000 {
+            let page = Note(title:"资料 \(index)",parent:parent)
+            pages.append(page); parent = page.id
+        }
+        var w = Workspace(notes:pages)
+        XCTAssertEqual(w.descendants(root.id).count,2001)
+        XCTAssertEqual(w.moveTargets(for:root.id).map(\.id),[outside.id])
+        w.notes[0].parentID = parent
+        XCTAssertEqual(w.descendants(root.id).count,2001)
+        XCTAssertEqual(w.moveTargets(for:root.id).map(\.id),[outside.id])
+    }
 }

@@ -11,11 +11,23 @@
 | Agent 实际通信 | `bash Scripts/check-native.sh --test-agent-transport` | 本机 HTTP 和 MCP 连接；需环境允许本机网络 |
 | Notebook 内核 | `python3 Scripts/test_notebook_kernel.py` | Python/Jupyter 实际执行；需已安装相应依赖 |
 
-2026-11-20，公开源码副本在 Apple Silicon、Xcode 27.2 环境中重新通过 `Scripts/check.sh`：76 个 XCTest、18 个 Agent 桥接测试，以及 Mac / iPad Simulator / iPad 设备 SDK 构建。随后通过 `Scripts/build-mac-package.sh` 完整构建并生成 PKG，解包后的应用文件与源构建一致，严格签名校验通过；安装目标固定为 `/Applications/Libere.app`，无安装脚本。
+2026-11-20，0.6.10（build 22）源码在 Apple Silicon、Xcode 27.2 环境通过 `Scripts/check.sh`：83 个 XCTest、18 个 Agent 桥接测试，以及 Mac / iPad Simulator / iPad 设备 SDK 构建。`Scripts/check-native.sh` 和 `Scripts/check-native.sh --optimized` 各通过 1285 项原生断言，包含 23 项侧栏、引用刷新与按需加载检查。
 
-构建的应用与安装包均包含 LICENSE、NOTICE 和第三方依赖声明。打包验证没有实际执行安装器。这些是本地构建记录，不表示 GitHub Actions 已经执行。
+Mac 可执行文件以 `-O -whole-module-optimization` 构建。应用和安装包均包含 LICENSE、NOTICE 与第三方依赖声明；PKG 解包后 16 个应用文件与原构建逐一一致，严格签名校验通过。安装目标固定为 `/Applications/Libere.app`，无安装脚本。打包验证未实际运行安装器；以上不表示 GitHub Actions 已执行。
 
-0.6.9 开发工作树此前已完成 1262 项原生断言；应用源码与本次公开副本一致，本次公开整理未重复运行该组检查。后续修改请在相应提交上重新运行需要的检查。
+## 大资料库性能检查
+
+相同 Apple Silicon Mac、相同未优化编译参数，1000 页合成资料，每项取 3 次中位数，与公开 0.6.9 源码比较：
+
+| 运算 | 0.6.9 | 0.6.10 |
+| --- | ---: | ---: |
+| 侧栏树构造 | 401.17 ms | 2.50 ms |
+| 单个“移动到”候选集合 | 2314.81 ms | 0.56 ms |
+| 已存在目录的同步 | 2096.61 ms | 20.73 ms |
+
+这是独立运算耗时，不是桌面点击到页面显示的延迟。此前本机维护版 21.1 已包含菜单候选优化，本版保留并纳入公开版本。
+
+300 个内容块的合成页面首屏只加载 2 个附近内容块；生产 NoteCanvas 的离屏原生检查验证首屏加载、远距离滚动、已加载视图保留、切页释放及五档缩放坐标。另覆盖循环/孤立层级、Unicode 摘要、目录路径一致性、当前引用与打开编辑器的外部变更，以及已有保存、撤销、批注和 PDF 锁定规则。
 
 ## 手动验收
 

@@ -2,6 +2,29 @@ import XCTest
 @testable import MarginCore
 
 final class FileWorkflowTests: XCTestCase {
+    func testBulkDirectoryPlanPreservesDeepOrphanTrashAndCyclicPaths() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LibereDirectoryPlan-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try Repository(root: root), directories = WorkspaceDirectories(repository: repository)
+        var notes = [Note(title: "根目录", folder: true)]
+        for i in 1...8 { notes.append(Note(title: "层级 \(i)", parent: notes.last!.id, folder: true)) }
+        let orphan = Note(title: "父页面缺失", parent: UUID())
+        var deleted = Note(title: "已删除", folder: true); deleted.deleted = true
+        let child = Note(title: "删除下的子页", parent: deleted.id)
+        var a = Note(title: "循环 A"), b = Note(title: "循环 B")
+        a.parentID = b.id; b.parentID = a.id
+        notes += [orphan, deleted, child, a, b]
+        let workspace = Workspace(notes: notes)
+        let expected = notes.map { directories.directory(for: $0.id, in: workspace) }
+        try directories.synchronize(workspace)
+        try directories.synchronize(workspace)
+        for path in expected { XCTAssertTrue(FileManager.default.fileExists(atPath: path.path), path.path) }
+        let index = try JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: directories.root.appendingPathComponent("index.json")))
+        for (note, path) in zip(notes, expected) {
+            XCTAssertEqual(index["pages"]?[note.id.uuidString], String(path.path.dropFirst(directories.root.path.count + 1)))
+        }
+    }
+
     func testNotebookPreservesMetadataAndAllMimeDataWhileEditing() throws {
         let original = Data(##"{"nbformat":4,"nbformat_minor":5,"metadata":{"kernelspec":{"name":"python3"},"custom":[1,"中文"]},"unknown":{"keep":true},"cells":[{"id":"a","cell_type":"code","source":["x=1\n","x"],"execution_count":7,"metadata":{"custom":"yes"},"outputs":[{"output_type":"display_data","data":{"image/png":"AAECAw==","text/plain":"unchanged","application/custom":{"a":42}},"metadata":{"width":9999}}]},{"cell_type":"markdown","source":"# 原文","metadata":{},"attachments":{"photo":{"image/png":"AAECAw=="}}}] }"##.utf8)
         var document = try NotebookDocument(data: original)

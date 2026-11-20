@@ -17,13 +17,20 @@ enum Palette {
 @MainActor struct NoteCanvas: View {
     @ObservedObject var store: AppStore
     let note: Note
+    @StateObject private var contentState = CanvasContentState()
     var body: some View {
         GeometryReader { viewport in
+            let retained = Set([store.blockSelection, store.editingBlockID, store.draggingBlockID].compactMap { $0 })
+            let blocks = contentState.blocks(in: note, viewport: viewport.size, zoom: store.zoom, preserving: retained)
             CanvasViewport(pageID: note.id, size: CGSize(width: note.width, height: note.height),
                            zoom: store.zoom, fitting: store.fitToWidth, didZoom: store.finishCanvasZoom,
-                           content: AnyView(paper.environment(\.colorScheme, .light).environment(\.canvasRenderScale, store.zoom)),
+                           content: AnyView(paper(blocks: blocks).environment(\.colorScheme, .light).environment(\.canvasRenderScale, store.zoom)),
                            routesMagnification: true, didClickDesk: store.clearBlockSelection,
-                           pointerInteraction: store.canvasPointer)
+                           pointerInteraction: store.canvasPointer,
+                           didChangeVisibleRect: { id, rect in
+                               guard id == note.id else { return }
+                               contentState.schedule(pageID: id, visible: rect, blocks: note.blocks)
+                           })
                 .background(CanvasKeyboard(store: store).frame(width: 0, height: 0))
                 .onAppear { store.fitCanvasToViewport(viewport.size) }
                 .onChange(of: viewport.size) { _, size in store.fitCanvasToViewport(size) }
@@ -38,11 +45,12 @@ enum Palette {
                 }
         }
     }
-    var paper: some View {
+    var paper: some View { paper(blocks: note.blocks) }
+    private func paper(blocks: [Block]) -> some View {
         ZStack(alignment: .topLeading) {
                 paperBackground
                 if store.grid { DotGrid().allowsHitTesting(false) }
-                ForEach(note.blocks) { block in
+                ForEach(blocks) { block in
                     BlockCard(store: store, block: block).allowsHitTesting(store.tool != .anchor && (store.tool != .ink || block.kind.hasAttachment))
                         .zIndex(store.blockSelection == block.id ? 1 : 0)
                 }

@@ -2,7 +2,7 @@
 
 ## 环境
 
-- Mac 和完整 Xcode。0.6.9 已使用 Xcode 27 完成构建；这是已验证环境，不表示所有较早版本均不可用。
+- Mac 和完整 Xcode。0.6.10 已使用 Xcode 27.2 完成构建；这是已验证环境，不表示所有较早版本均不可用。
 - 运行目标为 macOS 14+、iPadOS 17+。部分输入行为会按系统版本启用。
 - Python 3，用于工程验证、资源生成和打包脚本。
 - Notebook 执行需要选中的 Python 环境安装 `jupyter_client` 与 `ipykernel`。Agent MCP 桥接器只使用 Python 标准库，要求 Python 3.9+。
@@ -30,7 +30,7 @@ bash Scripts/build-mac-local.sh
 bash Scripts/run-mac.sh
 ```
 
-输出为 `.build/XcodeProducts/Debug/Libere.app`。脚本使用 Xcode 处理图标资源，再编译本地运行的可执行文件并临时签名；按当前机器架构构建，不生成通用二进制。默认本地构建关闭 CloudKit。
+输出为 `.build/XcodeProducts/Debug/Libere.app`。脚本使用 Xcode 处理图标资源，再以 `-O -whole-module-optimization` 编译本地运行的可执行文件并临时签名；按当前机器架构构建，不生成通用二进制。默认本地构建关闭 CloudKit。
 
 `--reuse-sdk-build` 仅用于相同源代码和资源已完成 SDK 构建的开发场景。日常构建使用不带该参数的命令。
 

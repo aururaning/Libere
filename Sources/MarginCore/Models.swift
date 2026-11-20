@@ -174,8 +174,20 @@ public struct Note: Identifiable, Codable, Equatable, Sendable {
         canvasHeight = CanvasExtent.expandedHeight(current: max(height, viewportHeight), contentBottom: contentBottom)
     }
     public var summary: String {
-        let overview = isFolder ? folderOverview.map { [$0] } ?? [] : []
-        return String((overview + blocks.filter { $0.kind == .text }.map(\.text)).filter { !$0.isEmpty }.joined(separator: " ").prefix(120))
+        // Folder cards need a short excerpt, not a joined copy of every text block.
+        var result = "", remaining = 120
+        func append(_ text: String) {
+            guard !text.isEmpty, remaining > 0 else { return }
+            if !result.isEmpty { result.append(" "); remaining -= 1 }
+            let prefix = text.prefix(remaining)
+            result.append(contentsOf: prefix); remaining -= prefix.count
+        }
+        if isFolder, let folderOverview { append(folderOverview) }
+        for block in blocks {
+            if remaining == 0 { break }
+            if block.kind == .text { append(block.text) }
+        }
+        return result
     }
 }
 
@@ -208,11 +220,21 @@ public struct Workspace: Codable, Equatable, Sendable {
         return a.isFolder != b.isFolder ? a.isFolder : (a.modifiedAt == b.modifiedAt ? a.id.uuidString < b.id.uuidString : a.modifiedAt > b.modifiedAt)
     }
     public func descendants(_ id: UUID) -> Set<UUID> {
+        var children: [UUID: [UUID]] = [:]
+        children.reserveCapacity(notes.count)
+        for note in notes {
+            if let parent = note.parentID { children[parent, default: []].append(note.id) }
+        }
         var found: Set<UUID> = [id]; var queue = [id]
         while let next = queue.popLast() {
-            for note in notes where note.parentID == next && !found.contains(note.id) { found.insert(note.id); queue.append(note.id) }
+            for child in children[next] ?? [] where found.insert(child).inserted { queue.append(child) }
         }
         return found
+    }
+    public func moveTargets(for id: UUID) -> [Note] {
+        guard notes.contains(where: { $0.id == id && !$0.deleted }) else { return [] }
+        let excluded = descendants(id)
+        return notes.filter { !$0.deleted && !excluded.contains($0.id) }
     }
     public func canMove(_ id: UUID, to parent: UUID?) -> Bool {
         guard notes.contains(where: { $0.id == id && !$0.deleted }) else { return false }

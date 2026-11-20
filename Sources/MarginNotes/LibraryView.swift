@@ -13,15 +13,21 @@ struct NoteTree: Identifiable {
     static func build(_ workspace: Workspace) -> [NoteTree] {
         let alive = workspace.notes.filter { !$0.deleted }
         let ids = Set(alive.map(\.id))
-        func branch(_ note: Note, seen: Set<UUID>) -> NoteTree {
-            let nested = workspace.children(note.id).filter { !seen.contains($0.id) }.map { branch($0, seen: seen.union([$0.id])) }
+        let children = Dictionary(grouping: alive, by: \.parentID).mapValues { $0.sorted(by: Workspace.sidebarLess) }
+        var visited: Set<UUID> = []
+        func branch(_ note: Note) -> NoteTree {
+            visited.insert(note.id)
+            var nested: [NoteTree] = []
+            for child in children[note.id] ?? [] where !visited.contains(child.id) {
+                nested.append(branch(child))
+            }
             return NoteTree(note: note, children: nested.isEmpty ? nil : nested)
         }
         let roots = alive.filter { $0.parentID == nil || !ids.contains($0.parentID!) }.sorted(by:Workspace.sidebarLess)
-        var result = roots.map { branch($0, seen: [$0.id]) }
+        var result: [NoteTree] = []
+        for root in roots where !visited.contains(root.id) { result.append(branch(root)) }
         // A malformed/imported parent cycle must not make pages disappear.
-        let reachable = roots.reduce(into: Set<UUID>()) { $0.formUnion(workspace.descendants($1.id)) }
-        result += alive.filter { !reachable.contains($0.id) }.map { NoteTree(note: $0, children: nil) }
+        for note in alive where visited.insert(note.id).inserted { result.append(NoteTree(note: note, children: nil)) }
         return result
     }
 }
@@ -133,7 +139,7 @@ struct NoteTree: Identifiable {
                         ForEach(sidebarItems, id: \.note.id) { item in
                             PageDragRow(store:store,note:item.note) {
                             HStack(spacing: 5) {
-                                if !store.workspace.children(item.note.id).isEmpty {
+                                if item.hasChildren {
                                     Button {
                                         if store.expandedPages.contains(item.note.id) { store.expandedPages.remove(item.note.id) }
                                         else { store.expandedPages.insert(item.note.id) }
@@ -168,10 +174,10 @@ struct NoteTree: Identifiable {
             }.padding(16)
         }
     }
-    private var sidebarItems: [(note: Note, depth: Int)] {
-        var result: [(note: Note, depth: Int)] = []
+    private var sidebarItems: [(note: Note, depth: Int, hasChildren: Bool)] {
+        var result: [(note: Note, depth: Int, hasChildren: Bool)] = []
         func visit(_ tree: NoteTree, depth: Int) {
-            result.append((tree.note, depth))
+            result.append((tree.note, depth, tree.children != nil))
             if store.expandedPages.contains(tree.id) { for child in tree.children ?? [] { visit(child, depth: depth + 1) } }
         }
         for root in NoteTree.build(store.workspace) { visit(root, depth: 0) }
@@ -190,7 +196,7 @@ struct NoteTree: Identifiable {
                 Button("引用文件为子页面") { store.select(note.id); referenceAsPage = true; showingReferences = true }
                 Menu("移动到") {
                     Button("知识库根目录") { store.move(note.id, to: nil) }
-                    ForEach(store.workspace.notes.filter { !$0.deleted && store.workspace.canMove(note.id, to: $0.id) }) { target in
+                    ForEach(store.workspace.moveTargets(for: note.id)) { target in
                         Button(target.title) { store.move(note.id, to: target.id) }
                     }
                 }
@@ -269,19 +275,22 @@ struct NoteTree: Identifiable {
         }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 18).frame(height: 29).background(.background)
     }
     private func folderView(_ note: Note) -> some View {
-        ScrollView {
+        let children = store.workspace.children(note.id)
+        let childCounts = Dictionary(grouping: store.workspace.notes.filter { !$0.deleted }, by: \.parentID).mapValues(\.count)
+        return ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 FolderOverview(store: store, noteID: note.id).id(note.id)
-                Text("\(store.workspace.children(note.id).count) 个子项目").font(.subheadline).foregroundStyle(.secondary)
+                Text("\(children.count) 个子项目").font(.subheadline).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 18)], spacing: 18) {
-                    ForEach(store.workspace.children(note.id)) { child in
+                    ForEach(children) { child in
+                        let summary = child.summary
                         Button { store.select(child.id) } label: {
                             VStack(alignment: .leading, spacing: 12) {
                                 Image(systemName: child.isFolder ? "folder.fill" : "doc.text").font(.title2).foregroundStyle(Palette.accent)
                                 Text(child.title).font(.headline).lineLimit(2)
-                                Text(child.summary.isEmpty ? "留一页给新的想法" : child.summary).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                                Text(summary.isEmpty ? "留一页给新的想法" : summary).font(.caption).foregroundStyle(.secondary).lineLimit(3)
                                 Spacer(minLength: 0)
-                                Text("\(child.blocks.count) 个内容块 · \(store.workspace.children(child.id).count) 个子项目").font(.caption2).foregroundStyle(.secondary)
+                                Text("\(child.blocks.count) 个内容块 · \(childCounts[child.id] ?? 0) 个子项目").font(.caption2).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading).frame(height: 160).padding(20).background(.background, in: RoundedRectangle(cornerRadius: 14))
                         }.buttonStyle(.plain)
                     }

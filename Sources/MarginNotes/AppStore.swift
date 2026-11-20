@@ -124,7 +124,7 @@ enum EditorTool: String, CaseIterable {
         if selection != id { fitToWidth = true; zoom = 1 }
         selection = id; blockSelection = nil; blockKeyboardFocus = false; tool = .select; formatting.clear(); showTrash = false
         expandAncestors(of: id)
-        refreshReferencedFiles()
+        refreshReferencedFiles(noteID: id)
     }
     func expandAncestors(of id: UUID) {
         var current = workspace.notes.first { $0.id == id }?.parentID, visited: Set<UUID> = []
@@ -643,8 +643,23 @@ enum EditorTool: String, CaseIterable {
         guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return "missing" }
         return "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):\(values.fileSize ?? 0)"
     }
-    func refreshReferencedFiles() {
-        for path in Set(workspace.notes.flatMap(\.blocks).compactMap(\.relativeFilePath)) {
+    func refreshReferencedFiles(noteID: UUID? = nil) {
+        // Opening a page should not stat unrelated files throughout the library.
+        // Include open editors so an externally changed session cannot linger
+        // and block saving/undo on a different page. App activation still checks
+        // the whole library; changed files invalidate all aliases of that path.
+        let blocks = noteID.map { id in workspace.notes.first { $0.id == id }?.blocks ?? [] }
+            ?? workspace.notes.flatMap(\.blocks)
+        var paths = Set(blocks.compactMap(\.relativeFilePath))
+        let openFiles = Set(textSessions.keys).union(notebookSessions.keys)
+        if noteID != nil, !openFiles.isEmpty {
+            for note in workspace.notes {
+                for block in note.blocks {
+                    if let path = block.relativeFilePath, openFiles.contains(block.fileIdentity.uuidString) { paths.insert(path) }
+                }
+            }
+        }
+        for path in paths {
             guard let url = ReferencePath.resolve(path, inside: repository.root) else { continue }
             let stamp = referenceStamp(url), previous = referenceStamps.updateValue(stamp, forKey: path)
             guard let previous, previous != stamp else { continue }

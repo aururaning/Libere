@@ -1,4 +1,52 @@
 import SwiftUI
+#if SWIFT_PACKAGE
+import MarginCore
+#endif
+
+/// Start with nearby cards, then admit others as the user scrolls. A card that has
+/// appeared stays alive until page navigation, preserving editor/ink state and the
+/// attachment's own scroll position. Native bounds changes never edit the note.
+@MainActor final class CanvasContentState: ObservableObject {
+    @Published private(set) var loadedIDs: Set<UUID> = []
+    private(set) var pageID: UUID?
+    private(set) var region: Rect?
+    private var pending: (UUID, CGRect, [Block])?
+    private var scheduled = false
+
+    func blocks(in note: Note, viewport: CGSize, zoom: Double, preserving: Set<UUID>) -> [Block] {
+        let scale = zoom.isFinite && zoom > 0 ? zoom : 1
+        let width = viewport.width.isFinite ? max(1, viewport.width / scale) : 800
+        let height = viewport.height.isFinite ? max(1, viewport.height / scale) : 600
+        let initial = Rect(0, 0, width, height)
+        let region = pageID == note.id ? self.region : nil
+        let retained = (pageID == note.id ? loadedIDs : []).union(preserving)
+        return CanvasVisibility.blocks(note.blocks, in: region ?? CanvasVisibility.region(around: initial)!, retaining: retained)
+    }
+
+    func schedule(pageID: UUID, visible: CGRect, blocks: [Block]) {
+        pending = (pageID, visible, blocks)
+        guard !scheduled else { return }
+        scheduled = true
+        // Bounds can change during NS/UIViewRepresentable updates. Coalesce them
+        // and publish outside that transaction, after the final page/zoom is set.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.scheduled = false
+            guard let (id, visible, blocks) = self.pending else { return }
+            self.pending = nil
+            self.update(pageID: id, visible: visible, blocks: blocks)
+        }
+    }
+
+    func update(pageID: UUID, visible: CGRect, blocks: [Block]) {
+        guard let region = CanvasVisibility.region(around: Rect(visible.minX, visible.minY, visible.width, visible.height)) else { return }
+        var next = self.pageID == pageID ? loadedIDs : []
+        next.formUnion(CanvasVisibility.blocks(blocks, in: region).map(\.id))
+        let changed = self.pageID != pageID || next != loadedIDs
+        self.pageID = pageID; self.region = region
+        if changed { loadedIDs = next }
+    }
+}
 
 /// Native scroll containers keep live magnification out of the document's observable model.
 /// Only the final scale is published, so a pinch does not rebuild every editor/PDF per sample.
@@ -45,6 +93,7 @@ import SwiftUI
     private var routedGesture = false
     private var magnificationEndTask: Task<Void, Never>?
     var didZoom: (Double) -> Void = { _ in }
+    var didChangeVisibleRect: ((UUID, CGRect) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -58,6 +107,8 @@ import SwiftUI
         automaticallyAdjustsContentInsets = false; contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         minMagnification = 0.25; maxMagnification = 6; allowsMagnification = true
         host.sizingOptions = []; paper.addSubview(host); documentView = paper
+        contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(reportVisibleRect), name: NSView.boundsDidChangeNotification, object: contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(startMagnifying), name: NSScrollView.willStartLiveMagnifyNotification, object: self)
         NotificationCenter.default.addObserver(self, selector: #selector(endMagnifying), name: NSScrollView.didEndLiveMagnifyNotification, object: self)
         NotificationCenter.default.addObserver(self, selector: #selector(windowLostFocus(_:)), name: NSWindow.didResignKeyNotification, object: nil)
@@ -245,6 +296,11 @@ import SwiftUI
     override func layout() {
         super.layout()
         centerCanvas()
+        reportVisibleRect()
+    }
+    @objc private func reportVisibleRect() {
+        guard let pageID, let didChangeVisibleRect else { return }
+        didChangeVisibleRect(pageID, paper.convert(contentView.bounds, from: contentView))
     }
     private func centerCanvas() {
         // Native clipping already constrains each live pinch. Avoid a second scroll/layout
@@ -267,6 +323,7 @@ import SwiftUI
         didZoom(Double(magnification))
     }
     func update(pageID: UUID, size: CGSize, zoom: Double, fitting: Bool, content: AnyView) {
+        defer { reportVisibleRect() }
         let changedPage = self.pageID != pageID
         if changedPage { pointerInteraction?.cancel() }
         self.pageID = pageID
@@ -304,9 +361,11 @@ import SwiftUI
     var didClickDesk: (() -> Void)? = nil
     var pointerInteraction: CanvasPointerInteraction? = nil
     var attachmentBlockID: UUID? = nil
+    var didChangeVisibleRect: ((UUID, CGRect) -> Void)? = nil
     func makeNSView(context: Context) -> CanvasScrollView { CanvasScrollView(frame: .zero) }
     func updateNSView(_ view: CanvasScrollView, context: Context) {
         view.didZoom = didZoom
+        view.didChangeVisibleRect = didChangeVisibleRect
         view.routesMagnification = routesMagnification
         view.didClickDesk = didClickDesk
         view.pointerInteraction = pointerInteraction
@@ -331,6 +390,7 @@ import SwiftUI
     private var centering = false
     var didZoom: (Double) -> Void = { _ in }
     var didClickDesk: (() -> Void)?
+    var didChangeVisibleRect: ((UUID, CGRect) -> Void)?
 
     override func loadView() {
         view = scroll
@@ -356,6 +416,11 @@ import SwiftUI
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         centerCanvas()
+        reportVisibleRect()
+    }
+    private func reportVisibleRect() {
+        guard let pageID, let didChangeVisibleRect else { return }
+        didChangeVisibleRect(pageID, paper.convert(scroll.bounds, from: scroll))
     }
     private func constrainedOffset(_ target: CGPoint) -> CGPoint {
         let inset = scroll.contentInset
@@ -376,6 +441,7 @@ import SwiftUI
         }
     }
     func update(pageID: UUID, size: CGSize, zoom: Double, fitting: Bool, content: AnyView) {
+        defer { reportVisibleRect() }
         loadViewIfNeeded()
         let changedPage = self.pageID != pageID
         self.pageID = pageID
@@ -404,7 +470,8 @@ import SwiftUI
         }
     }
     func viewForZooming(in scrollView: UIScrollView) -> UIView? { paper }
-    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerCanvas() }
+    func scrollViewDidScroll(_ scrollView: UIScrollView) { reportVisibleRect() }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) { centerCanvas(); reportVisibleRect() }
     func scrollViewWillBeginZooming(_ scrollView: UIScrollView, with view: UIView?) {
         if !programmatic { liveMagnifying = true }
     }
@@ -425,9 +492,11 @@ import SwiftUI
     var didClickDesk: (() -> Void)? = nil
     var pointerInteraction: CanvasPointerInteraction? = nil
     var attachmentBlockID: UUID? = nil
+    var didChangeVisibleRect: ((UUID, CGRect) -> Void)? = nil
     func makeUIViewController(context: Context) -> CanvasScrollController { CanvasScrollController() }
     func updateUIViewController(_ controller: CanvasScrollController, context: Context) {
         controller.didZoom = didZoom
+        controller.didChangeVisibleRect = didChangeVisibleRect
         controller.didClickDesk = didClickDesk
         controller.update(pageID: pageID, size: size, zoom: zoom, fitting: fitting, content: content)
     }

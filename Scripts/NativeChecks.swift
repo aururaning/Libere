@@ -480,6 +480,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runImageAttachmentNativeChecks()
         checks += try runFolderOverviewNativeChecks()
         checks += try await runFolderOverviewUINativeChecks()
+        checks += try await runNavigationNativeChecks()
         checks += try await runAgentNativeChecks()
         print("PASS: \(checks) native editor, model, attachment, PencilKit and agent assertions")
     }

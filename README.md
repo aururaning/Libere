@@ -15,7 +15,7 @@ Libere 是一款 Mac 端的集大成笔记应用，支持pdf、py脚本、jupyte
 
 ## 开始使用
 
-支持 **macOS 14 及以上**，直接在release中下载即可开始使用
+支持 **macOS 14 及以上**，直接在 [Release](https://github.com/aururaning/Libere/releases/latest) 中下载安装包即可开始使用
 
 该软件的暂时仅支持本地文件夹与icloud。安装打开后，选择目标文件夹即可开始搭建属于你的个人知识库
 

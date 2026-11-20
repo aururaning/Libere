@@ -44,14 +44,15 @@ assert (resources/'Assets.car').stat().st_mtime>=latest_icon, 'Rebuild the chang
 CHECK
 mkdir -p .build/module-cache
 # Keep the existing standalone app's bookmark behavior and opt-in window helper.
-xcrun swiftc -D MARGIN_LOCAL_BUILD -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macosx14.0" \
+# The installer runs this standalone executable; optimize it even though the SDK
+# build above is also used to validate development resources.
+xcrun swiftc -O -whole-module-optimization -D MARGIN_LOCAL_BUILD -parse-as-library -swift-version 5 -target "$(uname -m)-apple-macosx14.0" \
   -module-cache-path "$PWD/.build/module-cache" \
   Sources/MarginCore/*.swift Sources/MarginNotes/*.swift Scripts/MacWindowCheck.swift \
   -o .build/XcodeProducts/Debug/Libere.app/Contents/MacOS/Libere
 python3 - <<'BUILD'
 from pathlib import Path
-import plistlib,subprocess
-import shutil
+import plistlib,subprocess,shutil
 bundle=Path('.build/XcodeProducts/Debug/Libere.app/Contents')
 for notice in ('LICENSE', 'NOTICE', 'THIRD_PARTY_NOTICES.md'):
     shutil.copyfile(notice, bundle/'Resources'/notice)

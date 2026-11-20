@@ -30,8 +30,11 @@ public final class WorkspaceDirectories {
         }
     }
     public func directory(for noteID: UUID, in workspace: Workspace) -> URL {
+        directory(for: noteID, lookup: { id in workspace.notes.first { $0.id == id } })
+    }
+    private func directory(for noteID: UUID, lookup: (UUID) -> Note?) -> URL {
         var chain: [Note] = [], current: UUID? = noteID, visited: Set<UUID> = []
-        while let id = current, visited.insert(id).inserted, let note = workspace.notes.first(where: { $0.id == id }) {
+        while let id = current, visited.insert(id).inserted, let note = lookup(id) {
             chain.insert(note, at: 0); current = note.parentID
         }
         var directory = root
@@ -54,9 +57,14 @@ public final class WorkspaceDirectories {
     public func synchronize(_ workspace: Workspace) throws {
         let fm = FileManager.default
         try fm.createDirectory(at: root, withIntermediateDirectories: true)
-        let ordered = workspace.notes.sorted { directory(for: $0.id, in: workspace).pathComponents.count < directory(for: $1.id, in: workspace).pathComponents.count }
-        for note in ordered {
-            let destination = directory(for: note.id, in: workspace)
+        // Resolve each path once. Sorting used to repeatedly walk the full notes
+        // array for both operands, even when no folder had moved or been renamed.
+        let notes = Dictionary(workspace.notes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let ordered = workspace.notes.map { note in
+            let destination = directory(for: note.id, lookup: { notes[$0] })
+            return (note: note, destination: destination, depth: destination.pathComponents.count)
+        }.sorted { $0.depth < $1.depth }
+        for (note, destination, _) in ordered {
             let relative = String(destination.path.dropFirst(root.path.count + 1))
             if let old = paths[note.id.uuidString], old != relative {
                 let source = root.appendingPathComponent(old)
