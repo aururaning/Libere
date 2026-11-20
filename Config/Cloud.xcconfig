@@ -1,0 +1,4 @@
+#include "Base.xcconfig"
+MARGIN_CLOUD_ENABLED = YES
+CODE_SIGN_ENTITLEMENTS[sdk=macosx*] = Config/Mac-Cloud.entitlements
+CODE_SIGN_ENTITLEMENTS[sdk=iphone*] = Config/iPad-Cloud.entitlements

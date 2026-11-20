@@ -1,0 +1,417 @@
+[
+  {
+    "name": "list_pages",
+    "description": "查找资料库中的页面/层级。先搜索，再决定归档位置。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "parentID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "query": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "read_page",
+    "description": "读取页面、revision、文字、块 ID、附件与引用元信息。修改前必须读取。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageID": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "required": [
+        "pageID"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "read_attachment",
+    "description": "读取附件元信息、文字分页或原样 Base64；返回的是当前文件版本。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "blockID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "metadata",
+            "text",
+            "base64"
+          ],
+          "default": "metadata"
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        }
+      },
+      "required": [
+        "pageID",
+        "blockID"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "create_page",
+    "description": "在指定层级建立新页面，可同时写入文字和附件；isFolder=true 时不放块。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "parentID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "isFolder": {
+          "type": "boolean"
+        },
+        "canvasWidth": {
+          "type": "number",
+          "minimum": 320,
+          "maximum": 6000
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "reading",
+            "column",
+            "grid"
+          ],
+          "default": "reading",
+          "description": "reading：宽页正文+资料侧栏，窄页单列；column：顺序单列；grid：网格。"
+        },
+        "blocks": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "formula",
+                  "attachment",
+                  "reference",
+                  "link"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 100000,
+                "description": "文字为 Markdown；公式为 LaTeX。"
+              },
+              "filename": {
+                "type": "string",
+                "maxLength": 240
+              },
+              "dataBase64": {
+                "type": "string",
+                "contentEncoding": "base64",
+                "description": "attachment 必填；原文件字节，不压缩。"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "sourceURL": {
+                "type": "string",
+                "format": "uri",
+                "description": "原始资料的 http(s) 来源，仅记录，不自动访问。"
+              },
+              "sourcePageID": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sourceBlockID": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "collapsed": {
+                "type": "boolean",
+                "default": true,
+                "description": "附件默认收起为标题；false 展开预览。"
+              },
+              "height": {
+                "type": "number",
+                "minimum": 80,
+                "maximum": 1600,
+                "default": 480
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "append_blocks",
+    "description": "追加按输入顺序组织的资料。现有内容和手写不移动；相同文件复用引用。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "reading",
+            "column",
+            "grid"
+          ],
+          "default": "reading",
+          "description": "reading：宽页正文+资料侧栏，窄页单列；column：顺序单列；grid：网格。"
+        },
+        "blocks": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "formula",
+                  "attachment",
+                  "reference",
+                  "link"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 100000,
+                "description": "文字为 Markdown；公式为 LaTeX。"
+              },
+              "filename": {
+                "type": "string",
+                "maxLength": 240
+              },
+              "dataBase64": {
+                "type": "string",
+                "contentEncoding": "base64",
+                "description": "attachment 必填；原文件字节，不压缩。"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "sourceURL": {
+                "type": "string",
+                "format": "uri",
+                "description": "原始资料的 http(s) 来源，仅记录，不自动访问。"
+              },
+              "sourcePageID": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "sourceBlockID": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "collapsed": {
+                "type": "boolean",
+                "default": true,
+                "description": "附件默认收起为标题；false 展开预览。"
+              },
+              "height": {
+                "type": "number",
+                "minimum": 80,
+                "maximum": 1600,
+                "default": 480
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "additionalProperties": false
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "pageID",
+        "expectedRevision",
+        "blocks"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "update_block",
+    "description": "修改普通文字/公式、来源网址，或附件的收起状态。保护锁定与批注位置；文件正文请在应用内编辑。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "blockID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 100000
+        },
+        "collapsed": {
+          "type": "boolean"
+        },
+        "sourceURL": {
+          "type": "string",
+          "format": "uri",
+          "description": "原始资料的 http(s) 来源，仅记录，不自动访问。"
+        }
+      },
+      "required": [
+        "pageID",
+        "blockID",
+        "expectedRevision"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "layout_blocks",
+    "description": "按 blockIDs 顺序排列选定块。默认 dryRun=true 只预览；确认方案后 dryRun=false 提交。保护手写、锁定、关联批注。",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "pageID": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "blockIDs": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "reading",
+            "column",
+            "grid"
+          ],
+          "default": "reading",
+          "description": "reading：宽页正文+资料侧栏，窄页单列；column：顺序单列；grid：网格。"
+        },
+        "dryRun": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "required": [
+        "pageID",
+        "expectedRevision"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  }
+]
