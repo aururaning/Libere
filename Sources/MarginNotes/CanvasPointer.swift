@@ -46,6 +46,10 @@ import MarginCore
     @Published private(set) var preview: Preview?
     var isPressed: Bool { press != nil }
     var pressedBlockID: UUID? { press?.blockID }
+    var selectedScrollBlockID: UUID? {
+        guard let store, let block = store.block, block.collapsed != true else { return nil }
+        return block.id
+    }
     func hit(at point: CGPoint) -> CanvasHitTarget { store?.canvasHit(at: point) ?? .outside }
     func attachment(at point: CGPoint) -> UUID? {
         guard let store, let note = store.note,

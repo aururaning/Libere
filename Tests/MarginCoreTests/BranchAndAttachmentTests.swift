@@ -77,6 +77,7 @@ final class BranchAndAttachmentTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let repo = try Repository(root: root), id = UUID()
+        try FileManager.default.createDirectory(at: repo.assets, withIntermediateDirectories: true)
         let file = repo.assets.appendingPathComponent(id.uuidString + ".pdf")
         try Data("old".utf8).write(to: file)
         XCTAssertEqual(repo.asset(id), file)

@@ -100,10 +100,10 @@ class Client:
                     'type': 'string', 'minLength': 8, 'maxLength': 128,
                     'description': '可省略由桥接器生成；手动重试同一写入时沿用原 ID，不能用于不同参数。'}
         if status.get('allowWrites'):
-            tools.append({'name': 'import_file', 'description': '将 agent 所在 Mac 的一个本地文件原样追加到页面。支持 PDF、Markdown、Notebook 与文本源代码。',
+            tools.append({'name': 'import_file', 'description': '把当前资料库内已有文件的索引追加到页面，不上传或复制原文件。',
                 'inputSchema': {'type': 'object', 'additionalProperties': False, 'required': ['pageID', 'expectedRevision', 'path'], 'properties': {
                     'pageID': {'type': 'string', 'format': 'uuid'}, 'expectedRevision': {'type': 'string', 'format': 'uuid'},
-                    'path': {'type': 'string', 'description': '本地文件的绝对路径，最大 64 MiB。'},
+                    'path': {'type': 'string', 'description': '当前资料库内原文件的相对路径或绝对路径。'},
                     'collapsed': {'type': 'boolean', 'default': True}, 'sourceURL': {'type': 'string'},
                     'requestID': {'type': 'string', 'minLength': 8, 'maxLength': 128}}},
                 'annotations': {'readOnlyHint': False, 'destructiveHint': False, 'openWorldHint': False}})
@@ -114,20 +114,21 @@ class Client:
         request_id = arguments.pop('requestID', None)
         if name == 'import_file':
             raw_path = arguments.pop('path', '')
-            if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
-                raise APIError('invalid_path', '导入文件需要绝对路径。')
-            path = Path(raw_path)
+            status = self.status()
+            library = status.get('libraryPath')
+            if not isinstance(raw_path, str) or not raw_path or not library:
+                raise APIError('invalid_path', '需要当前资料库内已有文件的路径。')
+            root = Path(library).resolve()
+            path = (root / raw_path).resolve()
             try:
-                if not path.is_file() or path.stat().st_size > MAX_FILE:
-                    raise APIError('invalid_file', '需要不超过 64 MiB 的普通文件。')
-                with path.open('rb') as file:
-                    data = file.read(MAX_FILE + 1)
-                if not data or len(data) > MAX_FILE:
-                    raise APIError('invalid_file', '文件为空或超过 64 MiB。')
+                relative = path.relative_to(root)
+                if not path.is_file():
+                    raise APIError('invalid_file', '找不到原文件，请先手动把文件放入资料库。')
+            except ValueError as exc:
+                raise APIError('outside_library', '只允许索引当前资料库内的文件。') from exc
             except OSError as exc:
                 raise APIError('file_unreadable', '无法读取指定文件。') from exc
-            block = {'kind': 'attachment', 'filename': path.name, 'dataBase64': base64.b64encode(data).decode('ascii'),
-                     'collapsed': arguments.pop('collapsed', True)}
+            block = {'kind': 'file', 'filePath': relative.as_posix(), 'collapsed': arguments.pop('collapsed', True)}
             if 'sourceURL' in arguments:
                 block['sourceURL'] = arguments.pop('sourceURL')
             name = 'append_blocks'

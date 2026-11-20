@@ -76,38 +76,47 @@ extension AppStore {
         var copy = original
         copy.id = UUID(); copy.frame = frame; copy.fileID = original.fileIdentity
         copy.reference = original.reference ?? source; copy.locked = false; copy.anchorID = nil; copy.pageAnnotations = nil
-        checkpoint(); edit { $0.paper = note.paper; $0.blocks.append(copy) }
+        checkpoint(); edit {
+            $0.paper = note.paper; $0.blocks.append(copy)
+            if asPage, source == nil, copy.reference == nil, let path = copy.relativeFilePath {
+                $0.managedFilePath = path; $0.managedDirectoryPath = nil
+            }
+        }
         blockSelection = copy.id; blockKeyboardFocus = !asPage; tool = .select; flush()
     }
-    func referenceFile(_ url: URL, asPage: Bool = false) {
-        let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
-        for choice in referenceChoices {
-            let working = directories.fileURL(for: choice.block, noteID: choice.noteID, in: workspace)
-            if attachmentURL(for: choice.block)?.standardizedFileURL == url.standardizedFileURL || working.standardizedFileURL == url.standardizedFileURL {
-                addReference(choice, asPage: asPage); return
-            }
-        }
-        guard let path = ReferencePath.relative(url, inside: repository.root),
-              !["Assets", "Sync"].contains(path.components(separatedBy: "/").first ?? ""),
-              url.standardizedFileURL != repository.workspaceURL.standardizedFileURL,
-              path != "workspace.previous.json", path != "Projects/index.json" else {
-            message = "请选择当前资料库文件夹内的资料文件。其他位置的文件可以使用「导入文件」。"; return
-        }
+    func indexedBlock(at url: URL) throws -> Block {
+        let path = try FileIndexPolicy.path(for: url, inside: repository.root)
         let kind: BlockKind
         if url.pathExtension.lowercased() == "pdf" {
-            guard let pdf = PDFDocument(url: url), pdf.pageCount > 0, !pdf.isLocked else { message = "无法读取此 PDF。"; return }; kind = .pdf
+            guard let pdf = PDFDocument(url: url), pdf.pageCount > 0, !pdf.isLocked else { throw StoreError.corrupt }
+            kind = .pdf
         } else if let format = AttachmentFormat(filename: url.lastPathComponent) {
-            if format == .image {
-                do { try AttachmentImage.validate(at: url) }
-                catch { message = error.localizedDescription; return }
-            }
+            if format == .image { try AttachmentImage.validate(at: url) }
+            if format == .notebook { _ = try NotebookDocument(data: Data(contentsOf: url)) }
             kind = .file
-        }
-        else { message = "暂不支持这个文件类型。"; return }
+        } else { throw NSError(domain: "FileIndex", code: 1, userInfo: [NSLocalizedDescriptionKey: "暂不支持这个文件类型。"]) }
         var block = Block(kind, frame: Rect(28, 28, 380, 500))
-        block.assetName = url.lastPathComponent; block.relativeFilePath = path; block.fileID = UUID()
-        appendReference(block, source: nil, asPage: asPage)
-        refreshReferencedFiles()
+        block.assetName = url.lastPathComponent; block.relativeFilePath = path
+        block.fileID = UUID()
+        for note in workspace.notes {
+            if let original = note.blocks.first(where: { $0.relativeFilePath == path }) {
+                block.fileID = original.fileIdentity
+                block.reference = original.reference ?? FileReference(noteID: note.id, blockID: original.id)
+                break
+            }
+        }
+        return block
+    }
+    @discardableResult func referenceFile(_ url: URL, asPage: Bool = false) -> Bool {
+        let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let block = try indexedBlock(at: url)
+            let previous = blockSelection
+            appendReference(block, source: nil, asPage: asPage)
+            guard blockSelection != previous else { return false }
+            refreshReferencedFiles(noteID: selection)
+            return true
+        } catch { message = error.localizedDescription; return false }
     }
     func copySelectedBlock() {
         guard let block, block.isFilePlugin, let noteID = selection,
@@ -131,7 +140,7 @@ extension AppStore {
             appendReference(current, source: item.source, asPage: false)
         } else if item.root == repository.root.path {
             appendReference(item.block, source: item.source, asPage: false)
-        } else { message = "这份引用来自另一个资料库，请在原资料库中粘贴，或通过导入文件添加。" }
+        } else { message = "这份引用来自另一个资料库，请在原资料库中粘贴，请先把原文件手动放入当前资料库再建立索引。" }
         return true
     }
     func copyFocused() {

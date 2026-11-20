@@ -31,7 +31,7 @@ import MarginCore
                 }
                 if editing {
                     editingTools
-                    GeometryReader { geometry in
+                    BlockScrollScope(id: noteID) { GeometryReader { geometry in
                         let block = editorBlock(width: geometry.size.width)
                         RichTextEditor(block: block, formatting: store.formatting,
                             focus: { store.blockKeyboardFocus = false; store.sidebarHasFocus = false },
@@ -43,7 +43,7 @@ import MarginCore
                             }) { _, text in
                                 store.updateFolderOverview(noteID: noteID, text: text)
                             }
-                    }.frame(height: editorHeight)
+                    } }.frame(height: editorHeight)
                         .background(Color.primary.opacity(0.025), in: RoundedRectangle(cornerRadius: 8))
                     Text("用标题和列表整理分类，也可以插入子页面链接，完成后点击跳转。")
                         .font(.caption).foregroundStyle(.secondary)
@@ -61,6 +61,8 @@ import MarginCore
                 }
             }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
                 .background(.background, in: RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(store.folderBlockSelection == noteID ? Palette.accent : .clear, lineWidth: 1.5))
+                .simultaneousGesture(TapGesture().onEnded { store.folderBlockSelection = noteID })
                 .onDisappear { store.finishFolderOverviewEditing(noteID: noteID) }
                 .onChange(of: noteID) { _, _ in previewHeight = 180; editorHeight = 260 }
         }
@@ -92,19 +94,19 @@ import MarginCore
     }
 
     private func preview(_ value: String) -> some View {
-        GeometryReader { geometry in
+        BlockScrollScope(id: noteID) { GeometryReader { geometry in
             MarkdownWebView(html: Markdown.document(value, size: 18), layoutWidth: geometry.size.width,
                 measuredHeight: { width, height in
                     guard value == source, abs(width - geometry.size.width) < 2,
                           height.isFinite, height > 0 else { return }
-                    previewHeight = min(100_000, max(56, ceil(height)))
+                    previewHeight = min(480, max(56, ceil(height)))
                 }, openPage: { id in
                     guard store.workspace.notes.contains(where: { $0.id == id && !$0.deleted }) else {
                         store.message = "这个页面已移入回收站或不存在。"; return
                     }
                     store.select(id)
                 })
-        }.frame(height: previewHeight)
+        } }.frame(height: previewHeight)
     }
 
     /// Insert through the native editor so selection, native undo and IME stay intact.

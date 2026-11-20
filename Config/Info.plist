@@ -56,7 +56,7 @@
 			<key>UTTypeIdentifier</key>
 			<string>app.marginnotes.backup</string>
 			<key>UTTypeDescription</key>
-			<string>Libere 完整备份</string>
+			<string>Libere 索引与批注</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>

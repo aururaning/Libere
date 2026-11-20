@@ -61,19 +61,20 @@ import PDFKit
     check(tools.count == 3,"Read-only catalog omits mutation tools")
     service.allowWrites = true
     let bytes = Data("# 原文\r\n中文🍎\r\n```python\r\nprint(42)\r\n```\r\n".utf8)
-    let file: [String:Any] = ["kind":"attachment","filename":"原文.md","dataBase64":bytes.base64EncodedString()]
+    try bytes.write(to: root.appendingPathComponent("原文.md"))
+    let file: [String:Any] = ["kind":"file","filePath":"原文.md"]
     let beforeInvalid = store.workspace
     _ = try call("append_blocks",version(["blocks":[file,["kind":"link","url":"file:///etc/passwd"]]]),status:422)
     check(store.workspace == beforeInvalid,"Invalid batch commits no earlier block or receipt")
-    let filesBefore = try FileManager.default.contentsOfDirectory(at:store.repository.asset(UUID()).deletingLastPathComponent(),includingPropertiesForKeys:nil)
+    let filesBefore = (try? FileManager.default.contentsOfDirectory(at: store.repository.assets, includingPropertiesForKeys: nil)) ?? []
     _ = try call("append_blocks",version(["blocks":[file]]))
     let imported = current().blocks.last!
-    check(try Data(contentsOf:store.repository.asset(imported.assetID!)) == bytes,"Attachment bytes remain exact")
+    check(try Data(contentsOf:store.attachmentURL(for: imported)!) == bytes,"Attachment bytes remain exact")
     _ = try call("append_blocks",version(["blocks":[file]]))
     let duplicate = current().blocks.last!
-    check(duplicate.assetID == imported.assetID && duplicate.fileIdentity == imported.fileIdentity && duplicate.reference?.blockID == imported.id,"Duplicate original reuses storage and reference")
-    let filesAfter = try FileManager.default.contentsOfDirectory(at:store.repository.asset(UUID()).deletingLastPathComponent(),includingPropertiesForKeys:nil)
-    check(filesAfter.count == filesBefore.count + 1,"Exactly one asset stored for duplicate uploads")
+    check(duplicate.relativeFilePath == imported.relativeFilePath && duplicate.fileIdentity == imported.fileIdentity && duplicate.reference?.blockID == imported.id,"Duplicate original reuses storage and reference")
+    let filesAfter = (try? FileManager.default.contentsOfDirectory(at: store.repository.assets, includingPropertiesForKeys: nil)) ?? []
+    check(filesAfter.count == filesBefore.count,"Indexing the same file twice creates no asset files")
     let read = try call("read_attachment",["pageID":pageID.uuidString,"blockID":imported.id.uuidString,"format":"base64"])
     check(read["dataBase64"] as? String == bytes.base64EncodedString(),"Read returns exact bytes")
     let text = try call("read_attachment",["pageID":pageID.uuidString,"blockID":imported.id.uuidString,"format":"text","offset":2,"limit":4])

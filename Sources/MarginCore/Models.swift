@@ -45,7 +45,7 @@ public struct Block: Identifiable, Codable, Equatable, Sendable {
     public var assetID: UUID?
     public var assetSHA256: String?
     public var assetByteCount: Int64?
-    /// Original remains immutable; Notebook edits and outputs use a separate immutable snapshot.
+    /// Legacy identifiers are read only for migration; new files use relativeFilePath.
     public var notebookAssetID: UUID?
     public var workingAssetID: UUID?
     public var displayAssetID: UUID? { workingAssetID ?? notebookAssetID ?? assetID }
@@ -130,6 +130,10 @@ public struct Note: Identifiable, Codable, Equatable, Sendable {
     /// Editable folder introduction in Markdown. Nil keeps the default introduction;
     /// an empty string deliberately hides it. Optional for older notes and backups.
     public var folderOverview: String?
+    /// Physical entries managed by this sidebar item. Cross-page file references
+    /// do not acquire ownership of another page's source file.
+    public var managedDirectoryPath: String?
+    public var managedFilePath: String?
     public var paper = PaperKind.continuous
     /// Continuous canvases use document coordinates, independent of the current zoom.
     /// Optional dimensions preserve compatibility with existing notebooks and backups.
@@ -205,12 +209,13 @@ public enum CanvasExtent {
     }
 }
 public struct Workspace: Codable, Equatable, Sendable {
-    public var schemaVersion = 1
+    public var schemaVersion = 2
     public var notes: [Note] = []
     /// Outbox is written atomically with notes, before enqueueing CloudKit operations.
     public var pending: Set<String> = []
     /// Durable bounded receipts make agent retries idempotent across app restarts.
     public var agentReceipts: [AgentReceipt]?
+    public var fileMoveTransactionID: UUID?
     public init(notes: [Note] = []) { self.notes = notes }
     public func children(_ parent: UUID?) -> [Note] {
         notes.filter { !$0.deleted && $0.parentID == parent }.sorted(by:Self.sidebarLess)

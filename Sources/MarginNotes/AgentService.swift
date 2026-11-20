@@ -34,7 +34,7 @@ import MarginCore
                 switch request.head.target {
                 case "/v1/status":
                     return try json(["name": AppBrand.name, "apiVersion": "1", "workspaceID": workspaceID,
-                                     "workspaceName": store.repository.root.lastPathComponent, "allowWrites": allowWrites,
+                                     "workspaceName": store.repository.root.lastPathComponent, "libraryPath": store.repository.root.path, "allowWrites": allowWrites,
                                      "maxAttachmentBytes": AgentLimits.attachmentBytes, "maxBlocksPerCall": AgentLimits.blocksPerCall])
                 case "/v1/tools":
                     let object = try JSONSerialization.jsonObject(with: Data(contentsOf: resources.appendingPathComponent("agent_tools.json"))) as? [[String: Any]] ?? []
@@ -147,14 +147,20 @@ import MarginCore
         guard !page.isFolder || (tool == "create_page" && (args.blocks ?? []).isEmpty) else {
             throw AgentFailure(422, "folder_has_no_blocks", "文件夹用于组织子页面，请将内容放入页面。")
         }
-        var addedAssets: [UUID: Data] = [:]
         if tool == "create_page" || tool == "append_blocks" {
             let inputs = args.blocks ?? []
             guard inputs.count <= AgentLimits.blocksPerCall, tool != "append_blocks" || !inputs.isEmpty else {
                 throw AgentFailure(422, "invalid_blocks", "每次可写入 1–50 个内容块。")
             }
             var fresh: [Block] = []
-            for input in inputs { fresh.append(try makeBlock(input, store:store, page:page, pending:&addedAssets)) }
+            for input in inputs {
+                var block = try makeBlock(input, store: store, page: page)
+                if let path = block.relativeFilePath, let original = fresh.first(where: { $0.relativeFilePath == path }) {
+                    block.fileID = original.fileIdentity
+                    block.reference = original.reference ?? FileReference(noteID: page.id, blockID: original.id)
+                }
+                fresh.append(block)
+            }
             page.blocks += try AgentLayout.arrange(fresh, in:page, style:args.style ?? .reading)
         } else if tool == "update_block" {
             guard let index = page.blocks.firstIndex(where: { $0.id == args.blockID }) else { throw AgentFailure(404, "block_not_found", "找不到内容块。") }
@@ -197,11 +203,12 @@ import MarginCore
             }
             page.blocks = page.blocks.filter { !ids.contains($0.id) } + arranged
         }
+        if tool == "create_page", page.blocks.count == 1, let file = page.blocks.first,
+           file.reference == nil, let path = file.relativeFilePath { page.managedFilePath = path }
         page.extendCanvasForContent(); page.touch(store.device)
         if let index = candidate.notes.firstIndex(where: { $0.id == page.id }) { candidate.notes[index] = page }
         else { candidate.notes.append(page) }
         candidate.pending.insert("page_" + page.id.uuidString)
-        for id in addedAssets.keys { candidate.pending.insert("asset_" + id.uuidString) }
         let changed = page.blocks.filter { block in !previous.blocks.contains(block) }.map { block -> [String:Any] in
             var value = blockJSON(block,pageID:page.id,store:store); value.removeValue(forKey:"text"); return value
         }
@@ -209,18 +216,7 @@ import MarginCore
         var receipts = candidate.agentReceipts ?? []
         receipts.append(AgentReceipt(requestID:requestID,fingerprint:fingerprint,tool:tool,result:result.body))
         candidate.agentReceipts = Array(receipts.suffix(256))
-        var staged: [URL] = []
-        do {
-            for (id, bytes) in addedAssets {
-                let url = store.repository.asset(id)
-                guard !FileManager.default.fileExists(atPath:url.path) else { throw StoreError.attachmentMismatch }
-                try Repository.writeAtomically(bytes,to:url); staged.append(url)
-            }
-            try store.commitAgentWorkspace(candidate,previous:previous)
-        } catch {
-            for url in staged { try? FileManager.default.removeItem(at:url) }
-            throw error
-        }
+        try store.commitAgentWorkspace(candidate,previous:previous)
         store.expandAncestors(of:page.id)
         didWrite?("\(tool) · \(page.title)")
         return result
@@ -229,7 +225,7 @@ import MarginCore
         guard let url = WebLink.url(value) else { throw AgentFailure(422, "invalid_url", "链接必须使用 http 或 https。") }
         return url.absoluteString
     }
-    private func makeBlock(_ input: AgentBlockInput, store: AppStore, page: Note, pending: inout [UUID:Data]) throws -> Block {
+    private func makeBlock(_ input: AgentBlockInput, store: AppStore, page: Note) throws -> Block {
         var block: Block
         let height = input.height ?? 480
         guard height.isFinite, (80...1600).contains(height) else { throw AgentFailure(422,"invalid_height","预览高度需在 80–1600 点之间。") }
@@ -249,41 +245,15 @@ import MarginCore
             }
             block = original; block.id = UUID(); block.reference = original.reference ?? FileReference(noteID:source.id,blockID:original.id)
             block.fileID = original.fileIdentity; block.anchorID = nil; block.locked = false; block.pageAnnotations = nil
-        case "attachment":
-            let filename = input.filename ?? ""
-            guard !filename.isEmpty, filename.count <= 240, !filename.contains("/"), !filename.contains("\\"), !filename.contains("\0"),
-                  let encoded = input.dataBase64, encoded.utf8.count <= AgentLimits.bodyBytes,
-                  let bytes = Data(base64Encoded:encoded), !bytes.isEmpty,
-                  bytes.count + pending.values.reduce(0, { $0 + $1.count }) <= AgentLimits.attachmentBytes else {
-                throw AgentFailure(422,"invalid_attachment","需要有效文件名与 Base64 文件内容，每次附件总量最多 64 MiB。")
+        case "file", "attachment":
+            guard input.dataBase64 == nil, let path = input.filePath,
+                  let url = ReferencePath.resolve(path, inside: store.repository.root) else {
+                throw AgentFailure(422, "index_only", "只接受资料库内已有文件的 filePath 相对路径；请先手动放入原文件，不接受 Base64 附件。")
             }
-            let kind: BlockKind
-            if (filename as NSString).pathExtension.lowercased() == "pdf" {
-                guard let pdf = PDFDocument(data:bytes), pdf.pageCount > 0, !pdf.isLocked else { throw AgentFailure(422,"invalid_pdf","PDF 无法读取或已加密。") }
-                kind = .pdf
-            } else if let format = AttachmentFormat(filename:filename) {
-                do {
-                    if format == .notebook { _ = try NotebookDocument(data:bytes) }
-                    else if format == .image { try AttachmentImage.validate(data: bytes) }
-                    else { _ = try EditableText(data:bytes) }
-                } catch { throw AgentFailure(422,"invalid_file", format == .image ? "图片无法读取或内容已损坏。" : "文件编码或 Notebook 格式无效。") }
-                kind = .file
-            } else { throw AgentFailure(422,"unsupported_attachment","支持 PDF、图片、Markdown、Notebook、HTML 与文本/源代码文件。") }
-            let sha = AssetFingerprint.sha256(bytes)
-            let match = store.workspace.notes.filter { !$0.deleted }.compactMap { note in
-                note.blocks.first { $0.assetSHA256 == sha && $0.kind == kind }.map { (note.id,$0) }
-            }.first
-            block = Block(kind,frame:Rect(0,0,360,height)); block.assetName = filename
-            if let (noteID, original) = match, let asset = original.assetID,
-               (try? AssetFingerprint.read(store.repository.asset(asset)).sha256) == sha {
-                block.assetID = asset; block.fileID = original.fileIdentity
-                block.workingAssetID = original.workingAssetID; block.notebookAssetID = original.notebookAssetID
-                block.reference = original.reference ?? FileReference(noteID:noteID,blockID:original.id)
-            } else if let id = pending.first(where: { AssetFingerprint.sha256($0.value) == sha })?.key {
-                block.assetID = id; block.fileID = id
-            } else { let id = UUID(); pending[id] = bytes; block.assetID = id; block.fileID = id }
-            block.assetSHA256 = sha; block.assetByteCount = Int64(bytes.count)
-        default: throw AgentFailure(422,"invalid_kind","内容类型应为 text、formula、attachment、reference 或 link。")
+            do { block = try store.indexedBlock(at: url) }
+            catch { throw AgentFailure(422, "invalid_file", error.localizedDescription) }
+            block.frame = Rect(0, 0, 360, height)
+        default: throw AgentFailure(422,"invalid_kind","内容类型应为 text、formula、file、reference 或 link。")
         }
         if let url = input.sourceURL { block.sourceURL = try validURL(url) }
         if block.isFilePlugin {

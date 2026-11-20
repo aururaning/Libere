@@ -34,13 +34,13 @@ public final class Repository: @unchecked Sendable {
     public var sync: URL { root.appendingPathComponent("Sync", isDirectory: true) }
     public init(root: URL) throws {
         self.root = root
-        for url in [root, assets, sync] { try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
     }
     public func load() throws -> Workspace? {
         guard FileManager.default.fileExists(atPath: workspaceURL.path) else { return nil }
         let data = try Data(contentsOf: workspaceURL)
         guard let value = try? JSONDecoder().decode(Workspace.self, from: data) else { throw StoreError.corrupt }
-        guard value.schemaVersion == 1 else { throw StoreError.unsupported(value.schemaVersion) }
+        guard (1...2).contains(value.schemaVersion) else { throw StoreError.unsupported(value.schemaVersion) }
         return value
     }
     public func save(_ value: Workspace) throws {
@@ -67,18 +67,6 @@ public final class Repository: @unchecked Sendable {
         return assets.appendingPathComponent(id.uuidString)
     }
     @discardableResult public func copyAsset(_ source: URL, id: UUID) throws -> AssetFingerprint {
-        let destination = asset(id)
-        if FileManager.default.fileExists(atPath: destination.path) {
-            let original = try AssetFingerprint.read(source)
-            guard try AssetFingerprint.read(destination) == original else { throw StoreError.attachmentMismatch }
-            return original
-        }
-        let temporary = assets.appendingPathComponent(UUID().uuidString + ".partial")
-        defer { try? FileManager.default.removeItem(at: temporary) }
-        try FileManager.default.copyItem(at: source, to: temporary)
-        let original = try AssetFingerprint.read(source)
-        guard try AssetFingerprint.read(temporary) == original else { throw StoreError.attachmentMismatch }
-        try FileManager.default.moveItem(at: temporary, to: destination)
-        return original
+        throw FileIndexError.indexOnly
     }
 }

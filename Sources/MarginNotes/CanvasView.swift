@@ -178,7 +178,9 @@ struct AnchorHitShape: Shape {
         VStack(spacing: 0) {
             if block.kind != .text { header }
             if block.collapsed != true {
-                contents.frame(maxWidth: .infinity, maxHeight: .infinity)
+                BlockScrollScope(id: block.id) {
+                    contents.environment(\.canvasRenderScale, store.zoom)
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
                         if store.tool == .select && !editing {
                             selectionSurface

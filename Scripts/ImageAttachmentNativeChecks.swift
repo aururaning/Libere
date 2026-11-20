@@ -112,10 +112,10 @@ import UniformTypeIdentifiers
 
     store.importFile(pngURL)
     let original = store.block!
-    check(original.kind == .file && original.assetName == pngURL.lastPathComponent && original.assetID != nil,
+    check(original.kind == .file && original.assetName == pngURL.lastPathComponent && original.assetID == nil && original.relativeFilePath != nil,
           "Import creates a normal persistent image attachment block")
     check(try Data(contentsOf: store.attachmentURL(for: original)!) == pngBytes
-          && original.assetSHA256 == AssetFingerprint.sha256(pngBytes) && original.assetByteCount == Int64(pngBytes.count),
+          && original.referencedAssets.isEmpty,
           "Imported image bytes and their fingerprint match the unmodified original")
     do { _ = try store.textFileSession(noteID: noteID, blockID: original.id); preconditionFailure("Images must not create text sessions") }
     catch { check(true, "The store refuses to decode an image into an editable text session") }
@@ -148,13 +148,13 @@ import UniformTypeIdentifiers
     let truncatedURL = fixtures.appendingPathComponent("truncated.jpg")
     try jpegBytes.prefix(100).write(to: truncatedURL)
     let beforeInvalid = store.workspace
-    let assetsBeforeInvalid = Set(try FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path))
+    let assetsBeforeInvalid = Set((try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path)) ?? [])
     for url in [invalidURL, truncatedURL] {
         do { _ = try AttachmentImage.load(from: url); preconditionFailure("An invalid image must be rejected") }
         catch { check(true, "ImageIO rejects unreadable or truncated image content") }
         store.importFile(url); store.referenceFile(url)
     }
-    let assetsAfterInvalid = Set(try FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path))
+    let assetsAfterInvalid = Set((try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path)) ?? [])
     check(store.workspace == beforeInvalid && assetsAfterInvalid == assetsBeforeInvalid,
           "Rejected image imports and references create neither blocks nor orphaned assets")
 
@@ -194,9 +194,11 @@ import UniformTypeIdentifiers
     let restoredDirect = restoredNote.blocks.first { $0.id == direct.id }!
     check(restoredOriginal == current(original.id) && restoredNote.ink == store.note!.ink,
           "A backup round trip retains the image frame, lock and both annotation layers")
-    check(try Data(contentsOf: restored.attachmentURL(for: restoredOriginal)!) == pngBytes
-          && Data(contentsOf: restored.attachmentURL(for: restoredDirect)!) == jpegBytes && restoredDirect.relativeFilePath == nil,
-          "Backups preserve image originals and make direct references portable")
+    check(restoredOriginal.relativeFilePath == original.relativeFilePath && restoredDirect.relativeFilePath == direct.relativeFilePath,
+          "Index backups retain image paths and never turn direct references into attachments")
+    check(!FileManager.default.fileExists(atPath: restored.repository.assets.path)
+          && !FileManager.default.fileExists(atPath: restored.attachmentURL(for: restoredOriginal)!.path),
+          "Restoring image indexes does not duplicate original files")
     check(store.flush(), "Image fixture saves successfully")
     let reopened = try AppStore(root: root)
     check(reopened.workspace.notes.first { $0.id == noteID }!.blocks == store.note!.blocks,
@@ -214,7 +216,7 @@ import UniformTypeIdentifiers
         check(response.status == status, "Image Agent request \(tool) expected \(status), got \(response.status)")
         return try JSONSerialization.jsonObject(with: response.body) as! [String: Any]
     }
-    let agentResult = try call("create_page", ["title": "图片 API 测试", "blocks": [["kind": "attachment", "filename": "picture.png", "dataBase64": pngBytes.base64EncodedString()]]])
+    let agentResult = try call("create_page", ["title": "图片 API 测试", "blocks": [["kind": "file", "filePath": ReferencePath.relative(pngURL, inside: root)!]]])
     let agentNoteID = UUID(uuidString: (agentResult["page"] as! [String: Any])["id"] as! String)!
     let agentBlock = store.workspace.notes.first { $0.id == agentNoteID }!.blocks[0]
     check(try agentBlock.kind == .file && Data(contentsOf: store.attachmentURL(for: agentBlock)!) == pngBytes,

@@ -103,7 +103,7 @@
   },
   {
     "name": "create_page",
-    "description": "在指定层级建立新页面，可同时写入文字和附件；isFolder=true 时不放块。",
+    "description": "在指定层级建立新页面，可同时写入文字和文件索引；isFolder=true 时不放块。",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -145,7 +145,7 @@
                 "enum": [
                   "text",
                   "formula",
-                  "attachment",
+                  "file",
                   "reference",
                   "link"
                 ]
@@ -155,14 +155,9 @@
                 "maxLength": 100000,
                 "description": "文字为 Markdown；公式为 LaTeX。"
               },
-              "filename": {
+              "filePath": {
                 "type": "string",
-                "maxLength": 240
-              },
-              "dataBase64": {
-                "type": "string",
-                "contentEncoding": "base64",
-                "description": "attachment 必填；原文件字节，不压缩。"
+                "description": "file 必填：当前资料库内已有文件的相对路径。只建立索引，不接收或复制文件字节。"
               },
               "url": {
                 "type": "string",
@@ -247,7 +242,7 @@
                 "enum": [
                   "text",
                   "formula",
-                  "attachment",
+                  "file",
                   "reference",
                   "link"
                 ]
@@ -257,14 +252,9 @@
                 "maxLength": 100000,
                 "description": "文字为 Markdown；公式为 LaTeX。"
               },
-              "filename": {
+              "filePath": {
                 "type": "string",
-                "maxLength": 240
-              },
-              "dataBase64": {
-                "type": "string",
-                "contentEncoding": "base64",
-                "description": "attachment 必填；原文件字节，不压缩。"
+                "description": "file 必填：当前资料库内已有文件的相对路径。只建立索引，不接收或复制文件字节。"
               },
               "url": {
                 "type": "string",

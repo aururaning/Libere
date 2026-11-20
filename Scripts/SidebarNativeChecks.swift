@@ -27,7 +27,9 @@ import SwiftUI
     let notebook = try store.notebookSession(noteID:child,blockID:store.block!.id)
     let originalCWD = notebook.workingDirectory
     store.select(outside)
-    check(store.placePage(child,at:.inside(nil)),"Drag reparent commits")
+    let moved = store.placePage(child,at:.inside(nil))
+    if !moved { FileHandle.standardError.write(Data(("MOVE ERROR: " + (store.message ?? "nil") + "\n").utf8)) }
+    check(moved,"Drag reparent commits")
     check(store.workspace.notes.first { $0.id == nested }?.parentID == child,"Nested page retains ownership")
     let refAfter = store.workspace.notes.first { $0.id == outside }!.blocks[0]
     check(refAfter.relativeFilePath != previousPath && FileManager.default.fileExists(atPath:store.attachmentURL(for:refAfter)!.path),"Direct file reference follows directory move")

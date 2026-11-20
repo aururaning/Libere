@@ -11,12 +11,14 @@ typealias ViewState<Value> = SwiftUI.State<Value>
             if let store = bootstrap.store {
                 LibraryView(store: store, openStorage: { bootstrap.showingStorage = true }, openAgent: { bootstrap.showingAgent = true }).preferredColorScheme(.light)
                     .id(store.repository.root)
+                    .overlay { if bootstrap.isLoading { WorkspaceLoadingView() } }
                     .sheet(isPresented: $bootstrap.showingStorage) { WorkspaceSetup(bootstrap: bootstrap, settings: true) }
                     .sheet(isPresented: $bootstrap.showingAgent) { if let agent = bootstrap.agent { AgentSettings(controller:agent) } }
                 #if MARGIN_LOCAL_BUILD
                     .task { await MacWindowCheck.observe(store: store) }
                 #endif
             }
+            else if bootstrap.isLoading { WorkspaceLoadingView() }
             else { WorkspaceSetup(bootstrap: bootstrap) }
         }
         #if os(macOS)

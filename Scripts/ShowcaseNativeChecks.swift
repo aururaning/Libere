@@ -66,10 +66,9 @@ import PDFKit
           "Installation preserves existing pages byte-for-byte and opens the gallery")
     check(try store.repository.load()?.notes.count == original.count + pages.count,
           "The gallery is durable before it is displayed")
-    for (key, bytes) in catalog.backup.assets {
-        check(try Data(contentsOf: store.repository.asset(UUID(uuidString: key)!)) == bytes,
-              "Installed demo assets exactly match their verified source bytes")
-    }
+    check(!FileManager.default.fileExists(atPath: store.repository.assets.path), "Installing examples never creates attachments")
+    check(store.workspace.notes.filter { ids.contains($0.id) }.flatMap(\.blocks).allSatisfy { $0.referencedAssets.isEmpty },
+          "New examples keep guidance placeholders instead of duplicated file bytes")
     store.undo()
     check(store.workspace.notes.filter { ids.contains($0.id) }.allSatisfy(\.deleted) && store.selection == selection,
           "One undo removes the whole gallery and restores the previous selection")
@@ -121,7 +120,7 @@ import PDFKit
     try collision.repository.save(existing); collision.workspace = existing
     do { try collision.installShowcaseIfNeeded(catalog: catalog); preconditionFailure("Expected a collision") }
     catch ShowcaseCatalog.ContentError.collision { check(collision.workspace == existing, "Conflicting page IDs leave the library unchanged") }
-    let assetFiles = try FileManager.default.contentsOfDirectory(at: collision.repository.asset(UUID()).deletingLastPathComponent(), includingPropertiesForKeys: nil)
+    let assetFiles = (try? FileManager.default.contentsOfDirectory(at: collision.repository.assets, includingPropertiesForKeys: nil)) ?? []
     check(assetFiles.isEmpty, "ID conflicts cannot leave partial demo assets")
     var object = try JSONSerialization.jsonObject(with: data) as! [String: Any]
     var backup = object["backup"] as! [String: Any], assets = backup["assets"] as! [String: Any]

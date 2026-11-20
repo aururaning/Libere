@@ -82,7 +82,7 @@ info = {
  'UIBackgroundModes':['remote-notification'],
  'MarginCloudEnabled':'$(MARGIN_CLOUD_ENABLED)','MarginCloudContainer':'$(MARGIN_CLOUD_CONTAINER)',
  'UTExportedTypeDeclarations':[
-  {'UTTypeIdentifier':'app.marginnotes.backup','UTTypeDescription':'Libere 完整备份','UTTypeConformsTo':['public.json'], 'UTTypeTagSpecification':{'public.filename-extension':['marginbackup'],'public.mime-type':'application/json'}},
+  {'UTTypeIdentifier':'app.marginnotes.backup','UTTypeDescription':'Libere 索引与批注','UTTypeConformsTo':['public.json'], 'UTTypeTagSpecification':{'public.filename-extension':['marginbackup'],'public.mime-type':'application/json'}},
   {'UTTypeIdentifier':'app.marginnotes.page-drag','UTTypeDescription':'Libere 页面移动','UTTypeConformsTo':['public.data']}
  ]
 }

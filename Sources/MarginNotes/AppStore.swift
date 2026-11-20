@@ -15,6 +15,9 @@ enum EditorTool: String, CaseIterable {
     @Published var selection: UUID? {
         willSet {
             if newValue != selection {
+                folderBlockSelection = nil
+                let keep = Set(workspace.notes.first(where: { $0.id == newValue })?.blocks.map(\.fileIdentity) ?? [])
+                linkSnapshots = linkSnapshots.filter { keep.contains($0.key) }
                 if let id = folderOverviewEditingID { finishFolderOverviewEditing(noteID: id) }
                 canvasPointer.cancel(); finishBlockEditing(); draggingBlockID = nil
             }
@@ -27,6 +30,7 @@ enum EditorTool: String, CaseIterable {
         }
         didSet { if blockSelection != formatting.blockID { formatting.clear() } }
     }
+    @Published var folderBlockSelection: UUID?
     @Published var editingBlockID: UUID?
     @Published var draggingBlockID: UUID?
     lazy var canvasPointer = CanvasPointerInteraction(store: self)
@@ -61,6 +65,7 @@ enum EditorTool: String, CaseIterable {
     @Published var formulaEditor: Block?
     @Published var readerBlock: Block?
     @Published var fetchingLinks: Set<UUID> = []
+    @Published var linkSnapshots: [UUID: Data] = [:]
     @Published var showTrash = false
     @Published var showcaseCatalog: ShowcaseCatalog?
     @Published private(set) var folderOverviewEditingID: UUID?
@@ -76,7 +81,7 @@ enum EditorTool: String, CaseIterable {
     var cloud: CloudSync?
     private var saveTask: Task<Void, Never>?
     private let preferences: UserDefaults
-    private struct HistoryEntry: Codable {
+    fileprivate struct HistoryEntry: Codable, Sendable {
         var notes: [Note]
         var selection: UUID?
         init(_ notes: [Note], selection: UUID?) { self.notes = notes; self.selection = selection }
@@ -90,29 +95,73 @@ enum EditorTool: String, CaseIterable {
     }
     private var undoStack: [HistoryEntry] = []
     private var redoStack: [HistoryEntry] = []
-    private struct History: Codable { var undo: [HistoryEntry]; var redo: [HistoryEntry] }
+    fileprivate struct History: Codable, Sendable { var undo: [HistoryEntry]; var redo: [HistoryEntry] }
     private var historyURL: URL { repository.root.appendingPathComponent("History-" + device + ".json") }
 
-    init(root: URL? = nil, preferences: UserDefaults = .standard) throws {
+    struct StartupState: Sendable {
+        let repository: Repository
+        let workspace: Workspace?
+        let directoryIndex: WorkspaceDirectories.Index
+        let device: String
+        fileprivate let history: History?
+        let referenceStamps: [String: String]
+        let needsMigration: Bool
+    }
+    static func deviceIdentifier() -> String {
+        if let saved = UserDefaults.standard.string(forKey: "MarginDeviceID") { return saved }
+        let value = UUID().uuidString
+        UserDefaults.standard.set(value, forKey: "MarginDeviceID")
+        return value
+    }
+    /// This is intentionally nonisolated: large JSON decoding and file metadata
+    /// reads must finish outside the UI actor before the observable store exists.
+    nonisolated static func prepareStartup(root: URL, device: String) throws -> StartupState {
+        let repository = try Repository(root: root)
+        var workspace = try repository.load()
+        try FileHierarchyTransaction.recover(at: root, workspace: workspace)
+        let index = WorkspaceDirectories.loadIndex(at: root)
+        var needsMigration = false
+        if var existing = workspace {
+            needsMigration = WorkspaceDirectories(repository: repository, index: index).migrate(&existing)
+            workspace = existing
+        }
+        let historyURL = root.appendingPathComponent("History-" + device + ".json")
+        let history = (try? Data(contentsOf: historyURL)).flatMap { try? JSONDecoder().decode(History.self, from: $0) }
+        let initial = workspace?.notes.first { !$0.isFolder && !$0.deleted }
+        var stamps: [String: String] = [:]
+        for path in Set(initial?.blocks.compactMap(\.relativeFilePath) ?? []) {
+            if let url = ReferencePath.resolve(path, inside: root) { stamps[path] = referenceStamp(url) }
+        }
+        return StartupState(repository: repository, workspace: workspace, directoryIndex: index,
+                            device: device, history: history, referenceStamps: stamps, needsMigration: needsMigration)
+    }
+
+    init(root: URL? = nil, preferences: UserDefaults = .standard, prepared: StartupState? = nil) throws {
         self.preferences = preferences
         confirmSubtreeDeletion = preferences.object(forKey:"LibereConfirmSubtreeDeletion") as? Bool ?? true
         let args = ProcessInfo.processInfo.arguments
         let override = args.firstIndex(of: "--data-dir").flatMap { $0 + 1 < args.count ? URL(fileURLWithPath: args[$0 + 1]) : nil }
         let directory = root ?? override ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MarginNotes")
-        repository = try Repository(root: directory)
-        directories = WorkspaceDirectories(repository: repository)
+        let loaded = try prepared ?? Self.prepareStartup(root: directory, device: Self.deviceIdentifier())
+        guard loaded.repository.root.standardizedFileURL == directory.standardizedFileURL else { throw StoreError.corrupt }
+        repository = loaded.repository
+        directories = WorkspaceDirectories(repository: repository, index: loaded.directoryIndex)
         if let data = UserDefaults.standard.data(forKey: "MarginInkOptions"), let options = try? JSONDecoder().decode(InkOptions.self, from: data) { inkOptions = options }
-        device = UserDefaults.standard.string(forKey: "MarginDeviceID") ?? UUID().uuidString
-        UserDefaults.standard.set(device, forKey: "MarginDeviceID")
-        if let existing = try repository.load() { workspace = existing }
+        device = loaded.device
+        if let existing = loaded.workspace {
+            workspace = existing
+            // A canceled background load never writes its migration. Commit only
+            // after Bootstrap adopts this prepared library on the main actor.
+            if loaded.needsMigration { try repository.save(existing) }
+        }
         else { workspace = Self.welcome(device); try repository.save(workspace) }
-        if let data = try? Data(contentsOf: historyURL), let history = try? JSONDecoder().decode(History.self, from: data) {
+        if let history = loaded.history {
             undoStack = Array(history.undo.suffix(50)); redoStack = Array(history.redo.suffix(50))
         }
         selection = workspace.notes.first { !$0.isFolder && !$0.deleted }?.id
         if let selection { expandAncestors(of: selection) }
-        try directories.synchronize(workspace)
-        refreshReferencedFiles()
+        referenceStamps = loaded.referenceStamps
+        // Index-only libraries never rebuild working directories.
     }
     var note: Note? { workspace.notes.first { $0.id == selection && !$0.deleted } }
     var block: Block? { note?.blocks.first { $0.id == blockSelection } }
@@ -154,6 +203,7 @@ enum EditorTool: String, CaseIterable {
     }
     func cancelRename() { renaming = nil; renameDraft = "" }
     @discardableResult func beginFolderOverviewEditing(noteID: UUID) -> Bool {
+        folderBlockSelection = noteID
         guard workspace.notes.contains(where: { $0.id == noteID && $0.isFolder && !$0.deleted }) else { return false }
         if folderOverviewEditingID == noteID { return true }
         if let current = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: current) { return false }
@@ -265,29 +315,43 @@ enum EditorTool: String, CaseIterable {
     func undo() {
         if let id = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: id) { return }
         finishBlockEditing()
-        guard saveEditors(), let previous = undoStack.popLast() else { return }
+        guard saveEditors(), let previous = undoStack.last else { return }
         let before = workspace
-        redoStack.append(HistoryEntry(workspace.notes.filter { n in previous.notes.contains { $0.id == n.id } },selection:selection))
-        for note in previous.notes { restoreVersion(note) }
-        saveHistory(); flush(); relocateKernelDirectories(from:before,to:workspace); restoreSelection(previous.selection)
+        var next = workspace
+        for note in previous.notes { if let i = next.notes.firstIndex(where: { $0.id == note.id }) { next.notes[i] = restoredVersion(note) } }
+        do {
+            let paths = Dictionary(previous.notes.flatMap(\.blocks).compactMap { block in block.relativeFilePath.map { (block.fileIdentity, $0) } }, uniquingKeysWith: { a, _ in a })
+            let changed = try persistHierarchy(next, restoringFilePaths: paths)
+            undoStack.removeLast()
+            redoStack.append(HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection))
+            saveHistory(); restoreSelection(previous.selection)
+        } catch { message = error.localizedDescription }
     }
     func redo() {
         if let id = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: id) { return }
         finishBlockEditing()
-        guard saveEditors(), let next = redoStack.popLast() else { return }
+        guard saveEditors(), let entry = redoStack.last else { return }
         let before = workspace
-        undoStack.append(HistoryEntry(workspace.notes.filter { n in next.notes.contains { $0.id == n.id } },selection:selection))
-        for note in next.notes { restoreVersion(note) }
-        saveHistory(); flush(); relocateKernelDirectories(from:before,to:workspace); restoreSelection(next.selection)
+        var next = workspace
+        for note in entry.notes { if let i = next.notes.firstIndex(where: { $0.id == note.id }) { next.notes[i] = restoredVersion(note) } }
+        do {
+            let paths = Dictionary(entry.notes.flatMap(\.blocks).compactMap { block in block.relativeFilePath.map { (block.fileIdentity, $0) } }, uniquingKeysWith: { a, _ in a })
+            let changed = try persistHierarchy(next, restoringFilePaths: paths)
+            redoStack.removeLast()
+            undoStack.append(HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection))
+            saveHistory(); restoreSelection(entry.selection)
+        } catch { message = error.localizedDescription }
     }
     private func restoreSelection(_ preferred: UUID?) {
         if let preferred, workspace.notes.contains(where: { $0.id == preferred && !$0.deleted }) { select(preferred) }
         else if let first = workspace.children(nil).first { select(first.id) }
         else { selection = nil; blockSelection = nil }
     }
-    private func restoreVersion(_ value: Note) {
-        guard let i = workspace.notes.firstIndex(where: { $0.id == value.id }) else { return }
-        var copy = value; copy.version = value.version.joined(workspace.notes[i].version); copy.touch(device)
+    private func restoredVersion(_ value: Note) -> Note {
+        guard let i = workspace.notes.firstIndex(where: { $0.id == value.id }) else { return value }
+        var copy = value; copy.blocks = copy.blocks.map(directories.indexed); copy.version = value.version.joined(workspace.notes[i].version); copy.touch(device)
+        copy.managedFilePath = workspace.notes[i].managedFilePath
+        copy.managedDirectoryPath = workspace.notes[i].managedDirectoryPath
         // Layout undo must not roll a shared file back in only one of its reference locations.
         let files = workspace.notes.flatMap(\.blocks).filter(\.isFilePlugin)
         for index in copy.blocks.indices where copy.blocks[index].isFilePlugin {
@@ -295,9 +359,10 @@ enum EditorTool: String, CaseIterable {
                 copy.blocks[index].workingAssetID = latest.workingAssetID
                 copy.blocks[index].notebookAssetID = latest.notebookAssetID
                 copy.blocks[index].contentRevision = latest.contentRevision
+                copy.blocks[index].relativeFilePath = latest.relativeFilePath
             }
         }
-        workspace.notes[i] = copy; dirty(copy.id)
+        return copy
     }
     func edit(_ change: (inout Note) -> Void) {
         guard let i = workspace.notes.firstIndex(where: { $0.id == selection }) else { return }
@@ -347,13 +412,26 @@ enum EditorTool: String, CaseIterable {
     }
     @discardableResult func flush() -> Bool {
         saveTask?.cancel()
-        do { try repository.save(workspace); try directories.synchronize(workspace); saveStatus = "已保存到本机"; cloud?.enqueue(); return true }
+        do { try repository.save(workspace); saveStatus = "已保存到本机"; cloud?.enqueue(); return true }
         catch { saveStatus = "保存失败"; message = error.localizedDescription; return false }
     }
     func persistSync() throws { try repository.save(workspace) }
     func create(folder: Bool = false, parent: UUID? = nil) {
         var note = Note(title: folder ? "新文件夹" : "未命名笔记", parent: parent, folder: folder)
         if let first = workspace.children(parent).compactMap(\.sidebarOrder).min() { note.sidebarOrder = first > Int.min ? first - 1 : first }
+        let base = FileHierarchyTransaction.directoryPath(for: parent, in: workspace)
+        let path = (base.isEmpty ? "" : base + "/") + WorkspaceDirectories.safeName(note.title) + "__" + note.id.uuidString.prefix(8)
+        guard let directory = ReferencePath.resolve(path, inside: repository.root) else { message = FileIndexError.outsideLibrary.localizedDescription; return }
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        catch { message = error.localizedDescription; return }
+        var ancestor = parent, visited: Set<UUID> = []
+        while let id = ancestor, visited.insert(id).inserted, let i = workspace.notes.firstIndex(where: { $0.id == id }) {
+            if workspace.notes[i].managedDirectoryPath != nil || workspace.notes[i].managedFilePath != nil { break }
+            workspace.notes[i].managedDirectoryPath = FileHierarchyTransaction.directoryPath(for: id, in: workspace)
+            workspace.notes[i].touch(device); workspace.pending.insert("page_" + id.uuidString)
+            ancestor = workspace.notes[i].parentID
+        }
+        note.managedDirectoryPath = path
         note.touch(device); workspace.notes.append(note); dirty(note.id); select(note.id)
         beginRename(note.id)
     }
@@ -397,48 +475,46 @@ enum EditorTool: String, CaseIterable {
     }
     @discardableResult private func commitHierarchy(_ candidate: Workspace, changed: Set<UUID>, focus: UUID?) -> Bool {
         guard !changed.isEmpty else { return false }
-        var next = candidate, changed = changed
-        // App-owned page directories move on rename/reparent/trash. Keep cross-page
-        // direct file references pointing at the moved file, using the longest path first.
-        let before = workspace
-        let relocations = directoryRelocations(from:before,to:next)
-        for i in next.notes.indices {
-            for b in next.notes[i].blocks.indices {
-                if let path = next.notes[i].blocks[b].relativeFilePath,
-                   let move = relocations.first(where:{ path.hasPrefix($0.0) }) {
-                    next.notes[i].blocks[b].relativeFilePath = move.1 + path.dropFirst(move.0.count)
-                    changed.insert(next.notes[i].id)
-                }
-            }
-        }
-        for i in next.notes.indices where changed.contains(next.notes[i].id) {
-            next.notes[i].touch(device); next.pending.insert("page_" + next.notes[i].id.uuidString)
-        }
-        let previous = HistoryEntry(workspace.notes.filter { changed.contains($0.id) },selection:selection)
+        let before = workspace, previousSelection = selection
         do {
-            try repository.save(next); saveTask?.cancel(); workspace = next
-            undoStack.append(previous); undoStack = Array(undoStack.suffix(50)); redoStack = []; saveHistory()
-            saveStatus = "已保存到本机"
-            do { try directories.synchronize(workspace) } catch { message = "资料已保存，目录整理稍后重试：" + error.localizedDescription }
-            relocateKernelDirectories(from:before,to:workspace); restoreSelection(focus)
-            cloud?.enqueue(); return true
+            let affected = try persistHierarchy(candidate)
+            undoStack.append(HistoryEntry(before.notes.filter { affected.contains($0.id) }, selection: previousSelection))
+            undoStack = Array(undoStack.suffix(50)); redoStack = []; saveHistory()
+            restoreSelection(focus); return true
         } catch { message = error.localizedDescription; return false }
     }
-    private func directoryRelocations(from old: Workspace, to next: Workspace) -> [(String,String)] {
-        old.notes.compactMap { page -> (String,String)? in
-            guard next.notes.contains(where:{ $0.id == page.id }),
-                  let before = ReferencePath.relative(directories.directory(for:page.id,in:old),inside:repository.root),
-                  let after = ReferencePath.relative(directories.directory(for:page.id,in:next),inside:repository.root), before != after else { return nil }
-            return (before + "/",after + "/")
-        }.sorted { $0.0.count > $1.0.count }
-    }
-    private func relocateKernelDirectories(from old: Workspace, to next: Workspace) {
-        let relocations = directoryRelocations(from:old,to:next)
-        for session in notebookSessions.values {
-            guard let path = ReferencePath.relative(session.workingDirectory,inside:repository.root),
-                  let move = relocations.first(where:{ (path + "/").hasPrefix($0.0) }) else { continue }
-            session.workingDirectory = repository.root.appendingPathComponent(move.1 + (path + "/").dropFirst(move.0.count))
+    /// Stage renames, save their index, then retire the path-only recovery journal.
+    @discardableResult private func persistHierarchy(_ candidate: Workspace, restoringFilePaths: [UUID: String] = [:]) throws -> Set<UUID> {
+        var next = candidate
+        let transaction = try FileHierarchyTransaction.plan(from: workspace, to: &next, root: repository.root, restoringFilePaths: restoringFilePaths)
+        let old = Dictionary(workspace.notes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var changed: Set<UUID> = []
+        for i in next.notes.indices where old[next.notes[i].id] != next.notes[i] {
+            next.notes[i].touch(device); next.pending.insert("page_" + next.notes[i].id.uuidString); changed.insert(next.notes[i].id)
         }
+        try transaction.execute(at: repository.root)
+        do { try repository.save(next) }
+        catch {
+            if transaction.hasChanges { try transaction.rollback(at: repository.root) }
+            throw error
+        }
+        saveTask?.cancel(); workspace = next; saveStatus = "已保存到本机"
+        if transaction.hasChanges {
+            for session in notebookSessions.values {
+                if let path = ReferencePath.relative(session.workingDirectory, inside: repository.root) {
+                    session.workingDirectory = repository.root.appendingPathComponent(transaction.relocated(path))
+                }
+            }
+            // An indexed notebook moved on its own changes its containing directory too.
+            for (id, session) in notebookSessions {
+                if let block = next.notes.lazy.flatMap(\.blocks).first(where: { $0.fileIdentity.uuidString == id }),
+                   let file = attachmentURL(for: block) { session.workingDirectory = file.deletingLastPathComponent() }
+            }
+            referenceStamps = Dictionary(referenceStamps.map { (transaction.relocated($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+            do { try transaction.finish(at: repository.root) }
+            catch { message = "文件与索引已保存，移动记录将在下次打开时清理。" }
+        }
+        cloud?.enqueue(); return changed
     }
     func insert(_ kind: BlockKind, point: CGPoint? = nil, asset: UUID? = nil, name: String = "") {
         guard let note, !note.isFolder else { return }
@@ -453,29 +529,8 @@ enum EditorTool: String, CaseIterable {
         if kind == .formula { formulaEditor = block }
     }
     func importFile(_ url: URL, collapsed: Bool = false) {
-        let accessed = url.startAccessingSecurityScopedResource(); defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-        let kind: BlockKind
-        if url.pathExtension.lowercased() == "pdf" {
-            guard let pdf = PDFDocument(url: url), pdf.pageCount > 0, !pdf.isLocked else { message = "无法读取 PDF，请检查文件或先解除密码。"; return }
-            kind = .pdf
-        } else {
-            guard let format = AttachmentFormat(filename: url.lastPathComponent) else { message = "此文件格式暂不支持。"; return }
-            if format == .image {
-                do { try AttachmentImage.validate(at: url) }
-                catch { message = error.localizedDescription; return }
-            }
-            kind = .file
-        }
-        do {
-            let id = UUID(); let fingerprint = try repository.copyAsset(url, id: id)
-            insert(kind, asset: id, name: url.lastPathComponent)
-            if let block = note?.blocks.first(where: { $0.assetID == id }) {
-                editBlock(block.id) { $0.assetSHA256 = fingerprint.sha256; $0.assetByteCount = fingerprint.bytes }
-                if collapsed { toggleCollapsed(block.id) }
-                workspace.pending.insert("asset_" + id.uuidString); flush()
-            }
-            else { try? FileManager.default.removeItem(at: repository.asset(id)) }
-        } catch { message = error.localizedDescription }
+        guard referenceFile(url) else { return }
+        if collapsed, let id = blockSelection, block?.collapsed != true { toggleCollapsed(id) }
     }
     func deleteBlock(_ id: UUID) {
         finishBlockEditing()
@@ -587,10 +642,10 @@ enum EditorTool: String, CaseIterable {
               AttachmentFormat(filename: block.assetName) == .notebook, let url = attachmentURL(for: block) else { throw StoreError.corrupt }
         let key = block.fileIdentity.uuidString
         if let existing = notebookSessions[key] { return existing }
-        try directories.synchronize(workspace)
         let source = try Data(contentsOf: url)
+        if let path = block.relativeFilePath { referenceStamps[path] = Self.referenceStamp(url) }
         var expected = AssetFingerprint.sha256(source)
-        let directory = block.relativeFilePath != nil ? url.deletingLastPathComponent() : directories.directory(for: block.reference?.noteID ?? noteID, in: workspace)
+        let directory = url.deletingLastPathComponent()
         let session = try NotebookSession(data: source, directory: directory) { [weak self] data in
             guard let self else { throw StoreError.corrupt }
             try self.saveWorkingFile(data, fileID: block.fileIdentity, expected: expected)
@@ -605,6 +660,7 @@ enum EditorTool: String, CaseIterable {
         let key = block.fileIdentity.uuidString
         if let existing = textSessions[key] { return existing }
         let source = try Data(contentsOf: url)
+        if let path = block.relativeFilePath { referenceStamps[path] = Self.referenceStamp(url) }
         var expected = AssetFingerprint.sha256(source)
         let session = try TextFileSession(data: source) { [weak self] data in
             guard let self else { throw StoreError.corrupt }
@@ -615,44 +671,49 @@ enum EditorTool: String, CaseIterable {
     }
     func saveWorkingFile(_ data: Data, fileID: UUID, expected: String) throws {
         guard let current = workspace.notes.flatMap(\.blocks).first(where: { $0.fileIdentity == fileID }), let url = attachmentURL(for: current) else { throw StoreError.corrupt }
-        guard try AssetFingerprint.read(url).sha256 == expected else {
+        let actual = try AssetFingerprint.read(url).sha256, incoming = AssetFingerprint.sha256(data)
+        guard actual == expected || actual == incoming else {
             let recovery = repository.root.appendingPathComponent("Recoveries", isDirectory: true)
             try FileManager.default.createDirectory(at: recovery, withIntermediateDirectories: true)
             let filename = WorkspaceDirectories.safeName((current.assetName as NSString).deletingPathExtension) + "-" + AssetFingerprint.sha256(data).prefix(12) + "." + (current.assetName as NSString).pathExtension
             try Repository.writeAtomically(data, to: recovery.appendingPathComponent(filename))
             throw NSError(domain: "FileEdit", code: 1, userInfo: [NSLocalizedDescriptionKey: "文件已在其他位置修改。本次编辑已另存到资料库的 Recoveries 文件夹，可导出修改稿后重新打开文件。"])
         }
-        let snapshot = UUID(), revision = UUID()
-        if current.relativeFilePath != nil { try Repository.writeAtomically(data, to: url) }
-        else { try Repository.writeAtomically(data, to: repository.asset(snapshot)) }
+        let revision = UUID()
+        if actual != incoming { try Repository.writeAtomically(data, to: url) }
         var updated = workspace
         for page in updated.notes.indices {
             var changed = false
             for index in updated.notes[page].blocks.indices where updated.notes[page].blocks[index].fileIdentity == fileID {
-                if current.relativeFilePath == nil { updated.notes[page].blocks[index].workingAssetID = snapshot }
+                updated.notes[page].blocks[index] = directories.indexed(updated.notes[page].blocks[index])
                 updated.notes[page].blocks[index].contentRevision = revision; changed = true
             }
             if changed { updated.notes[page].touch(device); updated.pending.insert("page_" + updated.notes[page].id.uuidString) }
         }
-        if current.relativeFilePath == nil { updated.pending.insert("asset_" + snapshot.uuidString) }
         try repository.save(updated); workspace = updated; saveStatus = "已保存到本机"; cloud?.enqueue()
-        if let path = current.relativeFilePath { referenceStamps[path] = referenceStamp(url) }
+        if let path = current.relativeFilePath { referenceStamps[path] = Self.referenceStamp(url) }
         do { try directories.synchronize(updated) } catch { message = "文件已保存，工作目录整理未完成：" + error.localizedDescription }
     }
-    private func referenceStamp(_ url: URL) -> String {
+    nonisolated private static func referenceStamp(_ url: URL) -> String {
         guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return "missing" }
         return "\(values.contentModificationDate?.timeIntervalSince1970 ?? 0):\(values.fileSize ?? 0)"
     }
     func refreshReferencedFiles(noteID: UUID? = nil) {
         // Opening a page should not stat unrelated files throughout the library.
         // Include open editors so an externally changed session cannot linger
-        // and block saving/undo on a different page. App activation still checks
-        // the whole library; changed files invalidate all aliases of that path.
+        // and block saving/undo on a different page. Explicit full refresh remains
+        // available; activation uses the visible scope. Changes reach all aliases.
         let blocks = noteID.map { id in workspace.notes.first { $0.id == id }?.blocks ?? [] }
             ?? workspace.notes.flatMap(\.blocks)
+        refreshReferences(in: blocks, includeOpenEditors: noteID != nil)
+    }
+    func refreshVisibleReferences() {
+        refreshReferences(in: note?.blocks ?? [], includeOpenEditors: true)
+    }
+    private func refreshReferences(in blocks: [Block], includeOpenEditors: Bool) {
         var paths = Set(blocks.compactMap(\.relativeFilePath))
         let openFiles = Set(textSessions.keys).union(notebookSessions.keys)
-        if noteID != nil, !openFiles.isEmpty {
+        if includeOpenEditors, !openFiles.isEmpty {
             for note in workspace.notes {
                 for block in note.blocks {
                     if let path = block.relativeFilePath, openFiles.contains(block.fileIdentity.uuidString) { paths.insert(path) }
@@ -661,7 +722,7 @@ enum EditorTool: String, CaseIterable {
         }
         for path in paths {
             guard let url = ReferencePath.resolve(path, inside: repository.root) else { continue }
-            let stamp = referenceStamp(url), previous = referenceStamps.updateValue(stamp, forKey: path)
+            let stamp = Self.referenceStamp(url), previous = referenceStamps.updateValue(stamp, forKey: path)
             guard let previous, previous != stamp else { continue }
             let revision = UUID()
             for page in workspace.notes.indices {
@@ -729,11 +790,17 @@ enum EditorTool: String, CaseIterable {
         var next = workspace, placeholders: [Note] = []
         for var note in catalog.backup.workspace.notes {
             guard !next.notes.contains(where: { $0.id == note.id }) else { throw ShowcaseCatalog.ContentError.collision }
+            note.blocks = note.blocks.map { original in
+                guard original.kind.hasAttachment else { return original }
+                var block = Block(.text, frame: original.frame,
+                    text: "**示例文件：" + original.assetName + "**\n\n请先将资料文件放入资料库文件夹，再用「添加文件索引」选择它。文件只保留原件，索引不会复制文件。")
+                block.id = original.id; block.fontSize = 18
+                return block
+            }
             var deleted = note; deleted.deleted = true; deleted.trashBatchID = catalog.rootID
             placeholders.append(deleted)
             note.touch(device); next.notes.append(note); next.pending.insert("page_" + note.id.uuidString)
         }
-        next.pending.formUnion(catalog.backup.assets.keys.map { "asset_" + $0 })
         try repository.save(next)
         saveTask?.cancel(); workspace = next
         undoStack.append(HistoryEntry(placeholders, selection: before)); undoStack = Array(undoStack.suffix(50))

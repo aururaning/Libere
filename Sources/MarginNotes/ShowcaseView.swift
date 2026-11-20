@@ -21,7 +21,9 @@ import MarginCore
     """
     var body: some View {
         GeometryReader { geometry in
-            ScrollView { content(columns: geometry.size.width >= 700 ? 2 : 1) }
+            ScrollView { content(columns: geometry.size.width >= 700 ? 2 : 1)
+                    .background(FolderWheelRouter(store: store, pageID: catalog.rootID).frame(width: 0, height: 0))
+            }
                 .background(Palette.desk)
         }
     }

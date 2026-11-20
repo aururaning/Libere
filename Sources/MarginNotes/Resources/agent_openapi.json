@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Libere Agent API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Mac 本机接口。layout_blocks 的 dryRun=true 例外允许不带 requestID；不直接执行代码或抓取远程网址。"
   },
   "servers": [
@@ -288,7 +288,7 @@
                                   "enum": [
                                     "text",
                                     "formula",
-                                    "attachment",
+                                    "file",
                                     "reference",
                                     "link"
                                   ]
@@ -298,14 +298,9 @@
                                   "maxLength": 100000,
                                   "description": "文字为 Markdown；公式为 LaTeX。"
                                 },
-                                "filename": {
+                                "filePath": {
                                   "type": "string",
-                                  "maxLength": 240
-                                },
-                                "dataBase64": {
-                                  "type": "string",
-                                  "contentEncoding": "base64",
-                                  "description": "attachment 必填；原文件字节，不压缩。"
+                                  "description": "file 必填：当前资料库内已有文件的相对路径。只建立索引，不接收或复制文件字节。"
                                 },
                                 "url": {
                                   "type": "string",
@@ -403,7 +398,7 @@
                                   "enum": [
                                     "text",
                                     "formula",
-                                    "attachment",
+                                    "file",
                                     "reference",
                                     "link"
                                   ]
@@ -413,14 +408,9 @@
                                   "maxLength": 100000,
                                   "description": "文字为 Markdown；公式为 LaTeX。"
                                 },
-                                "filename": {
+                                "filePath": {
                                   "type": "string",
-                                  "maxLength": 240
-                                },
-                                "dataBase64": {
-                                  "type": "string",
-                                  "contentEncoding": "base64",
-                                  "description": "attachment 必填；原文件字节，不压缩。"
+                                  "description": "file 必填：当前资料库内已有文件的相对路径。只建立索引，不接收或复制文件字节。"
                                 },
                                 "url": {
                                   "type": "string",

@@ -7,8 +7,8 @@ import WebKit
     var body: some View {
         ZStack(alignment: .topLeading) {
             Color.white.overlay { CanvasPointerSurface(area: .paper) }
-            CanvasViewport(pageID: block.id, size: CGSize(width: 400, height: 1400), zoom: 1, fitting: false,
-                didZoom: { _ in }, content: AnyView(Color.white.frame(width: 400, height: 1400)), attachmentBlockID: block.id)
+            BlockScrollScope(id: block.id) { CanvasViewport(pageID: block.id, size: CGSize(width: 400, height: 1400), zoom: 1, fitting: false,
+                didZoom: { _ in }, content: AnyView(Color.white.frame(width: 400, height: 1400)), attachmentBlockID: block.id) }
                 .frame(width: 400, height: 240)
                 .overlay { CanvasPointerSurface(area: .body(block.id)) }
                 .offset(x: 100, y: 100)
@@ -99,6 +99,7 @@ import WebKit
     }
     var file = Block(.file, frame: Rect(100, 100, 400, 240)); file.assetName = "long.py"
     store.edit { $0.blocks = [file]; $0.anchors = [] }
+    store.selectBlock(file.id)
     for scale in [0.25, 0.5, 1.0, 2.0, 6.0] {
         store.zoom = scale
         viewport.update(pageID: store.selection!, size: CGSize(width: 900, height: 1800), zoom: scale, fitting: true,
@@ -113,19 +114,26 @@ import WebKit
               "Wheel reaches the attachment through its selection overlay, not the main canvas, at \(scale)")
         check(abs(inner.contentView.bounds.minY * scale - 40) < 1,
               "Precise wheel deltas stay in screen units at \(scale)")
-        check(store.note!.blocks[0].frame == file.frame && store.blockSelection == nil,
-              "Scrolling never moves, edits or selects the attachment")
+        check(store.note!.blocks[0].frame == file.frame && store.blockSelection == file.id,
+              "Scrolling never moves, edits or changes the selected attachment")
         check(!inner.allowsMagnification && CanvasScrollView.magnificationTarget(from: inner.host) === viewport,
               "Inline wheel container preserves the outer canvas pinch target")
     }
-    check(!viewport.routeAttachmentScroll(at: show(CGPoint(x: 600, y: 300)), in: window, delta: CGSize(width: 0, height: -40), precise: true),
-          "Blank canvas scrolling is not captured by a nearby file")
+    let selectedInner = descendants(viewport.host).compactMap { $0 as? CanvasScrollView }.first { $0.attachmentBlockID == file.id }!
+    selectedInner.contentView.scroll(to: CGPoint(x: 0, y: 100_000)); selectedInner.reflectScrolledClipView(selectedInner.contentView)
+    let blankPoint = show(CGPoint(x: 600, y: 300)), outerBeforeBoundary = viewport.contentView.bounds.origin
+    check(viewport.routeAttachmentScroll(at: blankPoint, in: window, delta: CGSize(width: 0, height: -40), precise: true)
+          && viewport.contentView.bounds.origin == outerBeforeBoundary,
+          "A selected block consumes wheel input at its bottom even when the pointer is on blank canvas")
     store.beginBlockEditing(file.id)
-    check(!viewport.routeAttachmentScroll(at: show(CGPoint(x: 300, y: 220)), in: window, delta: CGSize(width: 0, height: -40), precise: true),
-          "An active source editor retains its own scrolling")
+    check(viewport.routeAttachmentScroll(at: blankPoint, in: window, delta: CGSize(width: 0, height: 40), precise: true)
+          && viewport.contentView.bounds.origin == outerBeforeBoundary,
+          "Editing does not release selected-block wheel ownership to the outer page")
     store.clearBlockSelection(); store.edit { $0.blocks.append(cover) }
-    check(!viewport.routeAttachmentScroll(at: show(CGPoint(x: 200, y: 200)), in: window, delta: CGSize(width: 0, height: -40), precise: true),
-          "A covered attachment cannot steal wheel input from the visible top block")
+    let hoverPoint = show(CGPoint(x: 200, y: 200)), innerBefore = selectedInner.contentView.bounds.origin
+    check(viewport.routeAttachmentScroll(at: hoverPoint, in: window, delta: CGSize(width: 0, height: -40), precise: true)
+          && selectedInner.contentView.bounds.origin == innerBefore,
+          "With no selection the page owns the wheel, including above a scrollable attachment")
 
     var owner = Block(.text, frame: Rect(50, 50, 250, 300), text: "Owner"); owner.textFormat = nil
     var child = Block(.text, frame: Rect(480, 180, 260, 180), text: "Attached"); child.textFormat = nil

@@ -28,6 +28,7 @@ import MarginCore
         Task {
             defer { starting = false }
             do {
+                try FileManager.default.createDirectory(at: store.repository.sync, withIntermediateDirectories: true)
                 let container = CKContainer(identifier: identifier)
                 guard try await container.accountStatus() == .available else { store.cloudStatus = "请先登录 iCloud"; return }
                 let account = (try await container.userRecordID()).recordName
@@ -103,10 +104,9 @@ import MarginCore
                     record["revision"] = note.revision.uuidString as CKRecordValue
                     record["vector"] = try JSONEncoder().encode(note.version) as CKRecordValue
                     records.append(record)
-                } else if name.hasPrefix("asset_"), let uuid = UUID(uuidString: String(name.dropFirst(6))) {
-                    let asset = store.repository.asset(uuid)
-                    guard FileManager.default.fileExists(atPath: asset.path) else { continue }
-                    let record = self.record(name, type: "MarginAsset"); record["file"] = CKAsset(fileURL: asset); records.append(record)
+                } else if name.hasPrefix("asset_") {
+                    syncEngine.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
+                    store.workspace.pending.remove(name)
                 }
             } catch { pause(error); return nil }
         }
@@ -170,7 +170,8 @@ import MarginCore
         let name = record.recordID.recordName
         if record.recordType == "MarginPage" {
             guard let asset = record["payload"] as? CKAsset, let payload = asset.fileURL else { throw StoreError.corrupt }
-            let remote = try JSONDecoder().decode(Note.self, from: Data(contentsOf: payload))
+            var remote = try JSONDecoder().decode(Note.self, from: Data(contentsOf: payload))
+            remote.blocks = remote.blocks.map(store.directories.indexed)
             guard name == "page_" + remote.id.uuidString else { throw StoreError.corrupt }
             if let index = store.workspace.notes.firstIndex(where: { $0.id == remote.id }) {
                 let result = NoteMerge.merge(store.workspace.notes[index], remote)
@@ -181,10 +182,8 @@ import MarginCore
                     store.message = "检测到同一页被同时修改，两个版本均已保留。请查看根目录的「冲突副本」。"
                 }
             } else { store.workspace.notes.append(remote) }
-        } else if record.recordType == "MarginAsset", name.hasPrefix("asset_"), let uuid = UUID(uuidString: String(name.dropFirst(6))),
-                  let asset = record["file"] as? CKAsset, let payload = asset.fileURL {
-            try store.repository.copyAsset(payload, id: uuid); store.objectWillChange.send()
-        }
+        } // Legacy file payloads are not downloaded into index-only libraries.
+
         try cacheRecord(record)
     }
     private func report(_ error: Error) { store?.cloudStatus = "同步未完成"; store?.message = "iCloud：\(error.localizedDescription)" }

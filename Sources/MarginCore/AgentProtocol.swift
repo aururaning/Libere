@@ -122,6 +122,7 @@ public struct AgentBlockInput: Decodable {
     public var text: String?
     public var filename: String?
     public var dataBase64: String?
+    public var filePath: String?
     public var url: String?
     public var sourceURL: String?
     public var sourcePageID: UUID?

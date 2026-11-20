@@ -1,17 +1,26 @@
 import Foundation
 
-/// Human-readable working files mirror the page hierarchy; immutable originals stay in Assets.
+/// Read-only compatibility map for files produced by earlier versions.
 public final class WorkspaceDirectories {
+    public struct Index: Sendable {
+        fileprivate var paths: [String: String]
+        fileprivate var sources: [String: String]
+    }
     public let root: URL
     private let repository: Repository
     private var paths: [String: String] = [:]
     private var sources: [String: String] = [:]
-    public init(repository: Repository) {
-        self.repository = repository; root = repository.root.appendingPathComponent("Projects", isDirectory: true)
-        if let data = try? Data(contentsOf: root.appendingPathComponent("index.json")),
+    public static func loadIndex(at root: URL) -> Index {
+        if let data = try? Data(contentsOf: root.appendingPathComponent("Projects/index.json")),
            let object = try? JSONDecoder().decode([String: [String: String]].self, from: data) {
-            paths = object["pages"] ?? [:]; sources = object["files"] ?? [:]
+            return Index(paths: object["pages"] ?? [:], sources: object["files"] ?? [:])
         }
+        return Index(paths: [:], sources: [:])
+    }
+    public init(repository: Repository, index: Index? = nil) {
+        self.repository = repository; root = repository.root.appendingPathComponent("Projects", isDirectory: true)
+        let loaded = index ?? Self.loadIndex(at: repository.root)
+        paths = loaded.paths; sources = loaded.sources
     }
     public static func safeName(_ value: String) -> String {
         let cleaned = value.components(separatedBy: CharacterSet(charactersIn: "/\\:\0\n\r").union(.controlCharacters)).joined(separator: "_")
@@ -29,82 +38,64 @@ public final class WorkspaceDirectories {
         default: return "文本与源码"
         }
     }
+    /// Existing legacy directories remain readable, but page operations never move files.
     public func directory(for noteID: UUID, in workspace: Workspace) -> URL {
-        directory(for: noteID, lookup: { id in workspace.notes.first { $0.id == id } })
-    }
-    private func directory(for noteID: UUID, lookup: (UUID) -> Note?) -> URL {
-        var chain: [Note] = [], current: UUID? = noteID, visited: Set<UUID> = []
-        while let id = current, visited.insert(id).inserted, let note = lookup(id) {
-            chain.insert(note, at: 0); current = note.parentID
-        }
-        var directory = root
-        if chain.contains(where: \.deleted) { directory.appendPathComponent("回收站", isDirectory: true) }
-        for note in chain { directory.appendPathComponent(Self.safeName(note.title) + "__" + note.id.uuidString.prefix(8), isDirectory: true) }
-        return directory
+        if let path = workspace.notes.first(where: { $0.id == noteID })?.managedDirectoryPath,
+           let url = ReferencePath.resolve(path, inside: repository.root) { return url }
+        if let path = workspace.notes.first(where: { $0.id == noteID })?.managedFilePath,
+           let url = ReferencePath.resolve(path, inside: repository.root) { return url.deletingLastPathComponent() }
+        if let path = paths[noteID.uuidString], let url = ReferencePath.resolve(path, inside: root),
+           FileManager.default.fileExists(atPath: url.path) { return url }
+        return repository.root
     }
     public func notebookURL(for block: Block, noteID: UUID, in workspace: Workspace) -> URL {
         fileURL(for: block, noteID: noteID, in: workspace)
     }
     public func fileURL(for block: Block, noteID: UUID, in workspace: Workspace) -> URL {
-        directory(for: noteID, in: workspace).appendingPathComponent("文件/" + Self.category(block.assetName), isDirectory: true)
-            .appendingPathComponent(filename(block))
+        if let path = block.relativeFilePath, let url = ReferencePath.resolve(path, inside: repository.root) { return url }
+        if let path = legacyPath(for: block), let url = ReferencePath.resolve(path, inside: repository.root) { return url }
+        return repository.root
     }
-    private func filename(_ block: Block) -> String {
-        let ext = (block.assetName as NSString).pathExtension
-        let name = Self.safeName((block.assetName as NSString).deletingPathExtension)
-        return name + "__" + block.id.uuidString.prefix(8) + (ext.isEmpty ? "" : "." + ext)
+    public func legacyPath(for block: Block) -> String? {
+        guard let id = block.displayAssetID else { return nil }
+        // The old index points to the human-readable working file, including external edits.
+        // Do not enumerate directories or discard the other old versions.
+        for path in sources.keys.sorted() where sources[path] == id.uuidString {
+            if let url = ReferencePath.resolve(path, inside: root), FileManager.default.fileExists(atPath: url.path),
+               let relative = ReferencePath.relative(url, inside: repository.root) { return relative }
+        }
+        return ReferencePath.relative(repository.asset(id), inside: repository.root)
     }
-    public func synchronize(_ workspace: Workspace) throws {
-        let fm = FileManager.default
-        try fm.createDirectory(at: root, withIntermediateDirectories: true)
-        // Resolve each path once. Sorting used to repeatedly walk the full notes
-        // array for both operands, even when no folder had moved or been renamed.
-        let notes = Dictionary(workspace.notes.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        let ordered = workspace.notes.map { note in
-            let destination = directory(for: note.id, lookup: { notes[$0] })
-            return (note: note, destination: destination, depth: destination.pathComponents.count)
-        }.sorted { $0.depth < $1.depth }
-        for (note, destination, _) in ordered {
-            let relative = String(destination.path.dropFirst(root.path.count + 1))
-            if let old = paths[note.id.uuidString], old != relative {
-                let source = root.appendingPathComponent(old)
-                if fm.fileExists(atPath: source.path) && !fm.fileExists(atPath: destination.path) {
-                    try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
-                    try fm.moveItem(at: source, to: destination)
-                    for (id, path) in paths where path == old || path.hasPrefix(old + "/") { paths[id] = relative + path.dropFirst(old.count) }
-                    for key in Array(sources.keys) where key.hasPrefix(old + "/") { sources[relative + key.dropFirst(old.count)] = sources.removeValue(forKey: key) }
+    public func indexed(_ block: Block) -> Block {
+        guard block.isFilePlugin, block.displayAssetID != nil else { return block }
+        var copy = block
+        copy.fileID = block.fileIdentity
+        copy.relativeFilePath = block.relativeFilePath ?? legacyPath(for: block)
+        // A missing legacy file still has a stable relative path and can be restored manually.
+        if copy.relativeFilePath != nil {
+            copy.assetID = nil; copy.workingAssetID = nil; copy.notebookAssetID = nil
+            copy.assetSHA256 = nil; copy.assetByteCount = nil
+        }
+        return copy
+    }
+    @discardableResult public func migrate(_ workspace: inout Workspace) -> Bool {
+        let legacy = workspace.schemaVersion == 1
+        var changed = workspace.schemaVersion != 2
+        for page in workspace.notes.indices {
+            for index in workspace.notes[page].blocks.indices {
+                let before = workspace.notes[page].blocks[index], after = indexed(before)
+                if before != after {
+                    workspace.notes[page].blocks[index] = after; changed = true
+                    workspace.pending.insert("page_" + workspace.notes[page].id.uuidString)
                 }
             }
-            try fm.createDirectory(at: destination, withIntermediateDirectories: true)
-            paths[note.id.uuidString] = relative
-            for block in note.blocks where block.isFilePlugin && block.reference == nil && block.relativeFilePath == nil {
-                guard let original = block.assetID else { continue }
-                let category = Self.category(block.assetName)
-                let path = relative + "/文件/" + category + "/" + filename(block)
-                try mirror(block.displayAssetID ?? original, to: path)
-                if block.displayAssetID != original { try mirror(original, to: relative + "/原件/" + category + "/" + filename(block)) }
-            }
         }
-        let data = try JSONEncoder().encode(["pages": paths, "files": sources])
-        let index = root.appendingPathComponent("index.json")
-        if (try? Data(contentsOf: index)) != data { try Repository.writeAtomically(data, to: index) }
+        if legacy { FileHierarchyTransaction.bindExisting(&workspace, legacyDirectories: paths) }
+        workspace.schemaVersion = 2
+        let previous = workspace.pending
+        workspace.pending = workspace.pending.filter { !$0.hasPrefix("asset_") }
+        return changed || previous != workspace.pending
     }
-    private func mirror(_ id: UUID, to path: String) throws {
-        let fm = FileManager.default, target = root.appendingPathComponent(path), source = repository.asset(id)
-        guard fm.fileExists(atPath: source.path) else { return }
-        if sources[path] == id.uuidString && fm.fileExists(atPath: target.path) { return }
-        try fm.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if fm.fileExists(atPath: target.path) {
-            // Keep externally edited working files before advancing an app-owned snapshot.
-            if let prior = sources[path], let old = UUID(uuidString: prior),
-               (try? AssetFingerprint.read(target)) == (try? AssetFingerprint.read(repository.asset(old))) {
-                try Repository.writeAtomically(Data(contentsOf: source), to: target)
-            } else if try AssetFingerprint.read(target) != AssetFingerprint.read(source) {
-                let preserved = target.deletingPathExtension().appendingPathExtension("external-" + UUID().uuidString.prefix(8) + "." + target.pathExtension)
-                try fm.moveItem(at: target, to: preserved)
-                try fm.copyItem(at: source, to: target)
-            }
-        } else { try fm.copyItem(at: source, to: target) }
-        sources[path] = id.uuidString
-    }
+    /// Compatibility entry point: indexes never create, mirror, move or rename source files.
+    public func synchronize(_ workspace: Workspace) throws {}
 }

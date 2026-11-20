@@ -15,10 +15,10 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 class FakeClient(m.Client):
     def __init__(self):
         super().__init__(token='a'*64)
-        self.current='workspace-A'; self.writes=True; self.calls=[]; self.error=None
+        self.library=None; self.current='workspace-A'; self.writes=True; self.calls=[]; self.error=None
     def request(self,path,payload=None,text=False):
         self.calls.append((path,payload))
-        if path=='/v1/status': return {'workspaceID':self.current,'allowWrites':self.writes}
+        if path=='/v1/status': return {'workspaceID':self.current,'allowWrites':self.writes,'libraryPath':self.library}
         if path=='/v1/tools':
             tools=json.loads((ROOT/'Sources/MarginNotes/Resources/agent_tools.json').read_text())
             return {'tools':[t for t in tools if self.writes or t['name'] not in m.WRITES]}
@@ -63,10 +63,13 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.client.call('layout_blocks',{'dryRun':False})['requestID'])
     def test_import_preserves_bytes_and_title(self):
         with tempfile.TemporaryDirectory() as folder:
+            self.client.library=folder
             path=Path(folder)/'中文.md'; data=b'# text\r\n'+ '🍎'.encode(); path.write_bytes(data)
             value=self.client.call('import_file',{'path':str(path),'pageID':'p','expectedRevision':'r','collapsed':False})
             block=value['arguments']['blocks'][0]
-            self.assertEqual(m.base64.b64decode(block['dataBase64']),data); self.assertEqual(block['filename'],'中文.md'); self.assertFalse(block['collapsed'])
+            self.assertEqual(block['filePath'],'中文.md'); self.assertNotIn('dataBase64', block); self.assertEqual(path.read_bytes(),data); self.assertFalse(block['collapsed'])
+            relative=self.client.call('import_file',{'path':'中文.md','pageID':'p','expectedRevision':'r'})
+            self.assertEqual(relative['arguments']['blocks'][0]['filePath'], '中文.md')
     def test_import_rejects_relative_or_empty(self):
         with self.assertRaises(m.APIError): self.client.call('import_file',{'path':'relative.md'})
         with tempfile.NamedTemporaryFile() as file:

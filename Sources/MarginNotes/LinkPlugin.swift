@@ -25,7 +25,7 @@ extension AppStore {
               let index = workspace.notes[page].blocks.firstIndex(where: { $0.id == blockID }) else { return }
         workspace.notes[page].blocks[index].linkMode = mode
         workspace.notes[page].touch(device); workspace.pending.insert("page_" + noteID.uuidString); flush()
-        if mode == .html && workspace.notes[page].blocks[index].displayAssetID == nil {
+        if mode == .html && linkSnapshots[workspace.notes[page].blocks[index].fileIdentity] == nil {
             Task { await fetchHTML(noteID: noteID, blockID: blockID) }
         }
     }
@@ -45,16 +45,12 @@ extension AppStore {
             }
             guard let page = workspace.notes.firstIndex(where: { $0.id == noteID }),
                   let index = workspace.notes[page].blocks.firstIndex(where: { $0.id == blockID }) else { return }
-            let asset = UUID(); try Repository.writeAtomically(data, to: repository.asset(asset))
+            linkSnapshots[block.fileIdentity] = data
             for p in workspace.notes.indices {
                 var changed = false
                 for b in workspace.notes[p].blocks.indices where workspace.notes[p].blocks[b].fileIdentity == block.fileIdentity {
                     workspace.notes[p].blocks[b].fileID = block.fileIdentity
-                    if workspace.notes[p].blocks[b].assetID == nil {
-                        workspace.notes[p].blocks[b].assetID = asset
-                        workspace.notes[p].blocks[b].assetSHA256 = AssetFingerprint.sha256(data)
-                        workspace.notes[p].blocks[b].assetByteCount = Int64(data.count)
-                    } else { workspace.notes[p].blocks[b].workingAssetID = asset }
+                    workspace.notes[p].blocks[b].contentRevision = UUID()
                     workspace.notes[p].blocks[b].assetName = (url.host ?? "网页") + ".html"
                     workspace.notes[p].blocks[b].linkHTMLBaseURL = finalURL.absoluteString
                     workspace.notes[p].blocks[b].linkEncoding = response.textEncodingName ?? "utf-8"
@@ -63,7 +59,7 @@ extension AppStore {
                 if changed { workspace.notes[p].touch(device); workspace.pending.insert("page_" + workspace.notes[p].id.uuidString) }
             }
             workspace.notes[page].blocks[index].linkMode = .html
-            workspace.notes[page].touch(device); workspace.pending.formUnion(["asset_" + asset.uuidString, "page_" + noteID.uuidString]); flush()
+            workspace.notes[page].touch(device); workspace.pending.insert("page_" + noteID.uuidString); flush()
         } catch { message = "获取 HTML 失败：" + error.localizedDescription }
     }
     func openLink(_ block: Block) {
@@ -123,7 +119,10 @@ extension AppStore {
                 Button("获取 HTML 页面") { Task { await store.fetchHTML(noteID: noteID, blockID: block.id) } }.frame(maxHeight: .infinity)
             }
         }
-        .task(id: block.displayAssetID) { if let id = block.displayAssetID { data = try? Data(contentsOf: store.repository.asset(id)) } }
+        .task(id: block.contentRevision) {
+            data = store.linkSnapshots[block.fileIdentity]
+            if data == nil, let url = store.attachmentURL(for: block) { data = try? Data(contentsOf: url) }
+        }
         .fileExporter(isPresented: $exporting, document: data.map(AttachmentExport.init), contentType: .html, defaultFilename: block.assetName) { result in
             if case .failure(let error) = result { store.message = error.localizedDescription }
         }

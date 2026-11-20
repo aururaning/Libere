@@ -3,6 +3,13 @@ import WebKit
 
 /// Opt-in for the local build. Inspect only this app's own window and bundled welcome page.
 @MainActor enum MacWindowCheck {
+    private static var startupBegan: TimeInterval?
+    static func beginStartup() {
+        let args = ProcessInfo.processInfo.arguments
+        guard Bundle.main.object(forInfoDictionaryKey: "MarginWindowCheck") as? Bool == true
+                || (args.contains("--verify-window") && args.contains("--data-dir")) else { return }
+        startupBegan = ProcessInfo.processInfo.systemUptime
+    }
     static var fixtureRoot: URL? {
         guard Bundle.main.object(forInfoDictionaryKey: "MarginWindowCheck") as? Bool == true else { return nil }
         return Bundle.main.bundleURL.deletingLastPathComponent().appendingPathComponent("TestData")
@@ -15,6 +22,8 @@ import WebKit
         var evidence: [String: Any] = ["bundle": Bundle.main.bundleURL.path,
                                        "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") ?? "",
                                        "windowVisible": false, "markdownRendered": false]
+        if let startupBegan { evidence["dataReadyAfterSeconds"] = ProcessInfo.processInfo.systemUptime - startupBegan }
+        let startupOnly = Bundle.main.object(forInfoDictionaryKey: "MarginStartupCheck") as? Bool == true
         func record() throws { try Repository.writeAtomically(JSONSerialization.data(withJSONObject: evidence, options: [.prettyPrinted, .sortedKeys]), to: report) }
         let samples = ["check.py", "check.html", "check.ipynb"]
         let expected = Set(store.note?.blocks.map(\.assetName).filter(samples.contains) ?? [])
@@ -37,6 +46,9 @@ import WebKit
             if let window = NSApp.windows.first(where: { $0.isVisible && $0.title == AppBrand.name }),
                let content = window.contentView, content.bounds.width > 0 {
                 evidence["windowVisible"] = true
+                if evidence["firstWindowAfterSeconds"] == nil, let startupBegan {
+                    evidence["firstWindowAfterSeconds"] = ProcessInfo.processInfo.systemUptime - startupBegan
+                }
                 evidence["windowNumber"] = window.windowNumber
                 evidence["width"] = content.bounds.width
                 evidence["height"] = content.bounds.height
@@ -56,6 +68,13 @@ import WebKit
             evidence["attachmentsRendered"] = renderedFiles.sorted()
             evidence["inkStrokeCounts"] = strokeCounts
             try? record()
+            if startupOnly, evidence["windowVisible"] as? Bool == true {
+                if Bundle.main.object(forInfoDictionaryKey: "MarginCloseAfterWindowCheck") as? Bool == true {
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    NSApp.terminate(nil)
+                }
+                return
+            }
             if markdownReady && expected == renderedFiles {
                 if Bundle.main.object(forInfoDictionaryKey: "MarginCloseAfterWindowCheck") as? Bool == true { NSApp.terminate(nil) }
                 return

@@ -40,7 +40,7 @@ struct ShowcaseCatalog: Decodable {
     func scenario(containing pageID: UUID) -> Scenario? { scenarios.first { $0.pages.contains(pageID) } }
     func validate() throws {
         let notes = backup.workspace.notes, ids = Set(notes.map(\.id))
-        guard version == 1, backup.format == 1, backup.workspace.schemaVersion == 1,
+        guard version == 1, (1...2).contains(backup.format), (1...2).contains(backup.workspace.schemaVersion),
               rootID == Self.rootPageID, ids.count == notes.count,
               notes.contains(where: { $0.id == rootID && $0.isFolder && $0.parentID == nil }),
               backup.workspace.descendants(rootID) == ids,
@@ -73,22 +73,8 @@ struct ShowcaseCatalog: Decodable {
         if workspace.notes.contains(where: { $0.id == catalog.rootID }) { return false }
         let incoming = Set(catalog.backup.workspace.notes.map(\.id))
         guard incoming.isDisjoint(with: workspace.notes.map(\.id)) else { throw ShowcaseCatalog.ContentError.collision }
-        var staged: [URL] = []
-        do {
-            for (key, bytes) in catalog.backup.assets {
-                guard let id = UUID(uuidString: key) else { throw ShowcaseCatalog.ContentError.invalid }
-                let destination = repository.asset(id)
-                if FileManager.default.fileExists(atPath: destination.path) {
-                    guard try AssetFingerprint.read(destination).sha256 == AssetFingerprint.sha256(bytes) else { throw StoreError.attachmentMismatch }
-                } else {
-                    try Repository.writeAtomically(bytes, to: destination); staged.append(destination)
-                }
-            }
-            try commitShowcase(catalog)
-        } catch {
-            for url in staged { try? FileManager.default.removeItem(at: url) }
-            throw error
-        }
+        // Examples contain only page metadata. Users add their own files explicitly.
+        try commitShowcase(catalog)
         return true
     }
     func openShowcase() {

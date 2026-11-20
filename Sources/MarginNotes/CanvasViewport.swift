@@ -160,21 +160,14 @@ import MarginCore
             return handled ? nil : event
         }
     }
-    /// Wheel input bypasses the mouse-selection surface, but still uses the visible
-    /// block order. Scroll the whole paper so content and annotations move together.
+    /// Selection owns wheel routing throughout the page, independent of hover.
     @discardableResult func routeAttachmentScroll(at point: NSPoint, in eventWindow: NSWindow?, delta: CGSize, precise: Bool) -> Bool {
         guard let window, eventWindow === window, !liveMagnifying, pointerInteraction?.isPressed != true,
-              contentView.bounds.contains(contentView.convert(point, from: nil)),
-              let id = pointerInteraction?.attachment(at: paper.convert(point, from: nil)) else { return false }
-        var pending = [host as NSView]
-        while let view = pending.popLast() {
-            if let viewport = view as? CanvasScrollView, viewport.attachmentBlockID == id,
-               !viewport.isHiddenOrHasHiddenAncestor, viewport.visibleRect.contains(viewport.convert(point, from: nil)) {
-                return viewport.scrollPaper(delta: delta, precise: precise)
-            }
-            pending.append(contentsOf: view.subviews)
-        }
-        return false
+              contentView.bounds.contains(contentView.convert(point, from: nil)), pointerInteraction != nil else { return false }
+        if let id = pointerInteraction?.selectedScrollBlockID, let scope = SelectionWheel.scope(id, in: host),
+           SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point) { return true }
+        _ = scrollPaper(delta: delta, precise: precise)
+        return true
     }
     @discardableResult func scrollPaper(delta: CGSize, precise: Bool) -> Bool {
         guard delta.width.isFinite, delta.height.isFinite else { return false }

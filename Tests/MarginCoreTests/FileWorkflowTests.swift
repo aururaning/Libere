@@ -2,27 +2,29 @@ import XCTest
 @testable import MarginCore
 
 final class FileWorkflowTests: XCTestCase {
-    func testBulkDirectoryPlanPreservesDeepOrphanTrashAndCyclicPaths() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LibereDirectoryPlan-" + UUID().uuidString)
+    func testOpeningAndSynchronizingIndexNeverCreatesMirrors() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LibereIndex-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
         let repository = try Repository(root: root), directories = WorkspaceDirectories(repository: repository)
-        var notes = [Note(title: "根目录", folder: true)]
-        for i in 1...8 { notes.append(Note(title: "层级 \(i)", parent: notes.last!.id, folder: true)) }
-        let orphan = Note(title: "父页面缺失", parent: UUID())
-        var deleted = Note(title: "已删除", folder: true); deleted.deleted = true
-        let child = Note(title: "删除下的子页", parent: deleted.id)
-        var a = Note(title: "循环 A"), b = Note(title: "循环 B")
-        a.parentID = b.id; b.parentID = a.id
-        notes += [orphan, deleted, child, a, b]
-        let workspace = Workspace(notes: notes)
-        let expected = notes.map { directories.directory(for: $0.id, in: workspace) }
-        try directories.synchronize(workspace)
-        try directories.synchronize(workspace)
-        for path in expected { XCTAssertTrue(FileManager.default.fileExists(atPath: path.path), path.path) }
-        let index = try JSONDecoder().decode([String: [String: String]].self, from: Data(contentsOf: directories.root.appendingPathComponent("index.json")))
-        for (note, path) in zip(notes, expected) {
-            XCTAssertEqual(index["pages"]?[note.id.uuidString], String(path.path.dropFirst(directories.root.path.count + 1)))
-        }
+        let workspace = Workspace(notes: [Note(title: "目录", folder: true)])
+        try repository.save(workspace); try directories.synchronize(workspace)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: repository.assets.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directories.root.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: repository.sync.path))
+        XCTAssertEqual(try repository.load(), workspace)
+    }
+
+    func testIndexRejectsOutsideReservedMissingAndSymlinkEscapes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LibereIndexPolicy-" + UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let repository = try Repository(root: root)
+        let source = root.appendingPathComponent("中文.md"); try Data("正文".utf8).write(to: source)
+        XCTAssertEqual(try FileIndexPolicy.path(for: source, inside: root), "中文.md")
+        XCTAssertThrowsError(try FileIndexPolicy.path(for: root.appendingPathComponent("missing.md"), inside: root))
+        XCTAssertThrowsError(try FileIndexPolicy.path(for: repository.workspaceURL, inside: root))
+        let link = root.appendingPathComponent("outside")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root.deletingLastPathComponent())
+        XCTAssertThrowsError(try FileIndexPolicy.path(for: link.appendingPathComponent("anything.md"), inside: root))
     }
 
     func testNotebookPreservesMetadataAndAllMimeDataWhileEditing() throws {
@@ -66,33 +68,31 @@ final class FileWorkflowTests: XCTestCase {
         }
         XCTAssertThrowsError(try EditableText(data: Data([0xFF, 0xAB, 0xCD])))
     }
-    func testOriginalCopyFingerprintAndWorkingReferenceDeduplication() throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    func testLegacyFilesBecomeIndexesWithoutCopyingOrDiscardingVersions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("LibereLegacy-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let repo = try Repository(root: root), dirs = WorkspaceDirectories(repository: repo)
-        let source = root.appendingPathComponent("source.py"), original = Data("原始文件\n".utf8), working = Data("修改内容\n".utf8)
-        try original.write(to: source)
-        let asset = UUID(); let fingerprint = try repo.copyAsset(source, id: asset)
-        XCTAssertEqual(fingerprint.sha256, AssetFingerprint.sha256(original)); XCTAssertEqual(fingerprint.bytes, Int64(original.count))
-        var parent = Note(title: "项目", folder: true), page = Note(title: "页面", parent: parent.id), other = Note(title: "另一个项目")
-        var block = Block(.file, frame: Rect(20,20,380,500)); block.assetID = asset; block.assetName = "source.py"
-        let edited = UUID(); try working.write(to: repo.asset(edited)); block.workingAssetID = edited
-        var reference = block; reference.id = UUID(); reference.reference = FileReference(noteID: page.id, blockID: block.id)
-        page.blocks = [block]; other.blocks = [reference]
-        var workspace = Workspace(notes: [parent,page,other]); try dirs.synchronize(workspace)
-        let old = dirs.directory(for: page.id, in: workspace)
-        let file = dirs.fileURL(for: block, noteID: page.id, in: workspace)
-        XCTAssertEqual(try Data(contentsOf: file), working)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: dirs.fileURL(for: reference, noteID: other.id, in: workspace).path))
-        try Data("外部修改".utf8).write(to: file)
-        let next = UUID(); try Data("新版本".utf8).write(to: repo.asset(next)); workspace.notes[1].blocks[0].workingAssetID = next
-        try dirs.synchronize(workspace)
-        let siblings = try FileManager.default.contentsOfDirectory(atPath: file.deletingLastPathComponent().path)
-        XCTAssertTrue(siblings.contains { $0.contains("external-") })
-        parent.title = "项目改名"; workspace.notes[0] = parent; try dirs.synchronize(workspace)
-        XCTAssertFalse(FileManager.default.fileExists(atPath: old.path))
-        XCTAssertEqual(try Data(contentsOf: dirs.fileURL(for: block, noteID: page.id, in: workspace)), Data("新版本".utf8))
-        XCTAssertEqual(try Data(contentsOf: repo.asset(asset)), original)
+        let repo = try Repository(root: root)
+        try FileManager.default.createDirectory(at: repo.assets, withIntermediateDirectories: true)
+        let original = UUID(), edited = UUID()
+        try Data("原件".utf8).write(to: repo.asset(original)); try Data("编辑版".utf8).write(to: repo.asset(edited))
+        let working = root.appendingPathComponent("Projects/项目/工作稿.md")
+        try FileManager.default.createDirectory(at: working.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("外部更新".utf8).write(to: working)
+        let index = ["files": ["项目/工作稿.md": edited.uuidString], "pages": [String:String]()]
+        try JSONEncoder().encode(index).write(to: root.appendingPathComponent("Projects/index.json"))
+        var block = Block(.file, frame: Rect(20,20,380,500)); block.assetID = original; block.workingAssetID = edited; block.assetName = "工作稿.md"
+        var page = Note(title: "页面"); page.blocks = [block]
+        var workspace = Workspace(notes: [page]); workspace.schemaVersion = 1
+        let dirs = WorkspaceDirectories(repository: repo)
+        XCTAssertTrue(dirs.migrate(&workspace))
+        let result = workspace.notes[0].blocks[0]
+        XCTAssertEqual(result.relativeFilePath, "Projects/项目/工作稿.md")
+        XCTAssertEqual(result.fileIdentity, block.fileIdentity); XCTAssertTrue(result.referencedAssets.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: repo.asset(original)), Data("原件".utf8))
+        XCTAssertEqual(try Data(contentsOf: repo.asset(edited)), Data("编辑版".utf8))
+        XCTAssertEqual(try Data(contentsOf: working), Data("外部更新".utf8))
+        XCTAssertFalse(dirs.migrate(&workspace))
+        XCTAssertEqual(workspace.schemaVersion, 2)
     }
     func testReferencesStayWithinChosenRootAndFollowPageNames() {
         let root = URL(fileURLWithPath: "/tmp/my-library")

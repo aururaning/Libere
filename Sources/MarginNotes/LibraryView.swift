@@ -100,9 +100,13 @@ struct NoteTree: Identifiable {
         } message: { Text(store.message ?? "") }
         .onChange(of: store.selection) { _, _ in store.blockSelection = nil; store.tool = .select; store.formatting.clear(); store.showTrash = false }
         .onChange(of: phase) { _, next in
-            if next != .active, let id = store.folderOverviewEditingID { store.finishFolderOverviewEditing(noteID: id) }
-            store.saveEditors(); store.flush()
-            if next == .active { store.refreshReferencedFiles(); Task { await store.cloud?.refresh() } }
+            if next == .active {
+                store.refreshVisibleReferences()
+                Task { await store.cloud?.refresh() }
+            } else {
+                if let id = store.folderOverviewEditingID { store.finishFolderOverviewEditing(noteID: id) }
+                store.saveEditors(); store.flush()
+            }
         }
         .onReceive(timer) { _ in if phase == .active { Task { await store.cloud?.refresh() } } }
         .task { if UserDefaults.standard.bool(forKey: "MarginCloudEnabled") { store.enableCloud() } }
@@ -163,8 +167,8 @@ struct NoteTree: Identifiable {
                 Spacer()
                 Button { store.showTrash.toggle() } label: { Image(systemName: "shippingbox") }.buttonStyle(.plain).accessibilityLabel("回收站").help("回收站")
                 Menu {
-                    Button("导出完整备份") { do { backup = try store.backup(); exporting = true } catch { store.message = error.localizedDescription } }
-                    Button("导入备份") { importingBackup = true; showingImporter = true }
+                    Button("导出索引与批注") { do { backup = try store.backup(); exporting = true } catch { store.message = error.localizedDescription } }
+                    Button("导入索引与批注") { importingBackup = true; showingImporter = true }
                     Button("Agent 接入…",action:openAgent)
                     Toggle("删除含子项时提示",isOn:$store.confirmSubtreeDeletion)
                     Divider()
@@ -202,7 +206,7 @@ struct NoteTree: Identifiable {
                 }
                 Button("移入回收站（⌘⌫）", role: .destructive) { store.requestTrash(note.id) }
                 #if os(macOS)
-                Button("打开工作目录") { if store.flush() { NSWorkspace.shared.open(store.directories.directory(for: note.id, in: store.workspace)) } }
+                Button("打开原文件夹") { if store.flush() { NSWorkspace.shared.open(store.directories.directory(for: note.id, in: store.workspace)) } }
                 #endif
             }
     }
@@ -239,9 +243,9 @@ struct NoteTree: Identifiable {
                 Divider().frame(height: 20)
                 Button { store.insert(.formula) } label: { Label("公式", systemImage: "function") }.buttonStyle(.plain)
                 Menu {
-                    Button("导入并展开") { importCollapsed = false; importingBackup = false; showingImporter = true }
-                    Button("导入并收起") { importCollapsed = true; importingBackup = false; showingImporter = true }
-                } label: { Label("导入文件", systemImage: "doc.badge.plus") }
+                    Button("添加索引并展开") { importCollapsed = false; importingBackup = false; showingImporter = true }
+                    Button("添加索引并收起") { importCollapsed = true; importingBackup = false; showingImporter = true }
+                } label: { Label("添加文件索引", systemImage: "doc.badge.plus") }
                 Menu {
                     ForEach(LinkDisplayMode.allCases, id: \.self) { mode in Button("粘贴为" + mode.title) { store.pasteLink(mode: mode) } }
                 } label: { Label("粘贴链接", systemImage: "link") }
@@ -296,6 +300,7 @@ struct NoteTree: Identifiable {
                     }
                 }
             }.padding(28)
+                .background(FolderWheelRouter(store: store, pageID: note.id).frame(width: 0, height: 0))
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Palette.desk)
     }
     private var trashView: some View {

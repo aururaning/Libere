@@ -20,6 +20,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
 @main @MainActor struct NativeChecks {
     static func main() async throws {
         precondition(Bundle.main.bundleIdentifier == "app.marginnotes.nativechecks", "Run through Scripts/check-native.sh so PencilKit has a bundle identifier")
+        if CommandLine.arguments.contains("--sidebar-only") { _ = try runSidebarNativeChecks(); return }
         var checks = 0
         func check(_ result: @autoclosure () -> Bool, _ label: String) {
             precondition(result(), label); checks += 1
@@ -177,19 +178,20 @@ private final class HTMLFixtureProtocol: URLProtocol {
             let url = root.appendingPathComponent(name)
             try Data(source.utf8).write(to: url)
             store.importFile(url)
-            guard let block = store.block, block.assetName == name, let asset = block.assetID else { fatalError("Import failed: " + name) }
-            importedIDs.append(asset)
-            let bytes = try Data(contentsOf: store.repository.asset(asset))
-            check(block.kind == .file && bytes == Data(source.utf8) && store.workspace.pending.contains("asset_" + asset.uuidString), "Imported original and queued its asset")
+            guard let block = store.block, block.assetName == name, block.relativeFilePath == name, block.assetID == nil else { fatalError("Index failed: " + name) }
+            importedIDs.append(block.fileIdentity)
+            let bytes = try Data(contentsOf: store.attachmentURL(for: block)!)
+            check(block.kind == .file && bytes == Data(source.utf8) && !store.workspace.pending.contains(where: { $0.hasPrefix("asset_") }), "Indexed original without an asset copy or asset upload")
         }
         let archive = try store.backup()
         let backupURL = root.appendingPathComponent("test.marginbackup")
         try archive.data.write(to: backupURL)
         let restored = try AppStore(root: root.appendingPathComponent("restored"))
         try restored.importBackup(backupURL)
-        for (i, asset) in importedIDs.enumerated() {
-            let bytes = try Data(contentsOf: restored.repository.asset(asset))
-            check(bytes == Data(imported[i].1.utf8) && restored.workspace.notes.flatMap(\.blocks).contains(where: { $0.assetID == asset }), "Original attachment survives backup and restore")
+        for (i, identity) in importedIDs.enumerated() {
+            let block = restored.workspace.notes.flatMap(\.blocks).first { $0.fileIdentity == identity }!
+            check(block.relativeFilePath == imported[i].0 && block.referencedAssets.isEmpty, "Index backup retains original relative paths and shared identity")
+            check(!FileManager.default.fileExists(atPath: restored.attachmentURL(for: block)!.path), "Restoring an index never creates an original file")
         }
         // A child created from any entry point exposes its ancestry and immediately renames.
         store.create(folder: true); let folderID = store.selection!
@@ -200,23 +202,23 @@ private final class HTMLFixtureProtocol: URLProtocol {
         check(store.note?.title == "层级页" && store.renaming == nil, "Return commits sidebar name")
         let textURL = root.appendingPathComponent("editable.md"); let originalBytes = Data("# 原文\n\n==重点== 🍎".utf8)
         try originalBytes.write(to: textURL); store.importFile(textURL, collapsed: true)
-        let sourcePage = store.selection!, sourceBlock = store.block!, sourceAsset = sourceBlock.assetID!
+        let sourcePage = store.selection!, sourceBlock = store.block!, sourcePath = store.block!.relativeFilePath!
         check(sourceBlock.collapsed == true && sourceBlock.frame.height == Block.collapsedHeight, "Import collapses to a title-only row")
         store.toggleCollapsed(sourceBlock.id)
         check(store.block?.frame.height == 500 && store.block?.collapsed == false, "Expand restores imported file size")
-        let countBeforeReference = try FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count
+        let countBeforeReference = (try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count) ?? 0
         let choice = store.referenceChoices.first { $0.block.id == sourceBlock.id }!
         store.create(); store.addReference(choice)
         let referencePage = store.selection!, referenceBlock = store.block!
-        check(referenceBlock.assetID == sourceAsset && referenceBlock.reference?.noteID == sourcePage, "Reference shares immutable bytes and records origin")
-        check((try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count) == countBeforeReference, "Creating a reference stores no duplicate asset")
+        check(referenceBlock.relativeFilePath == sourcePath && referenceBlock.reference?.noteID == sourcePage, "Reference shares the original path and records its owning page")
+        check(((try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count) ?? 0) == countBeforeReference, "Creating a reference stores no duplicate asset")
         let session = try store.textFileSession(noteID: referencePage, blockID: referenceBlock.id)
         session.edit("# 修改稿\n\n**共享内容**"); check(session.save(), "Referenced Markdown saves")
         let copies = store.workspace.notes.flatMap(\.blocks).filter { $0.fileIdentity == sourceBlock.fileIdentity }
-        check(copies.count == 2 && Set(copies.compactMap(\.workingAssetID)).count == 1 && copies.allSatisfy { $0.workingAssetID != nil }, "Editing updates every reference to one shared working snapshot")
-        check((try? Data(contentsOf: store.repository.asset(sourceAsset))) == originalBytes, "Editing never changes imported original bytes")
+        check(copies.count == 2 && copies.allSatisfy { $0.workingAssetID == nil && $0.relativeFilePath == sourcePath } && Set(copies.compactMap(\.contentRevision)).count == 1, "Editing updates the original and all alias revisions without file snapshots")
+        check((try? Data(contentsOf: textURL)) == Data("# 修改稿\n\n**共享内容**".utf8), "Editing saves directly into the original file")
         check((try? store.textFileSession(noteID: sourcePage, blockID: sourceBlock.id)) === session, "Two reference editors share one session")
-        check(store.attachmentTitle(referenceBlock, on: referencePage).hasSuffix("层级页 / editable.md"), "Cross-project reference title retains source path and filename")
+        check(store.attachmentTitle(referenceBlock, on: referencePage).hasSuffix("editable.md"), "Cross-project reference title retains source path and filename")
         store.selectBlock(referenceBlock.id); store.deleteSelectedBlock()
         check(store.note?.blocks.contains(where: { $0.id == referenceBlock.id }) == false, "Delete removes selected block")
         let historyReload = try AppStore(root: root); historyReload.undo()
@@ -224,21 +226,21 @@ private final class HTMLFixtureProtocol: URLProtocol {
         store.undo(); store.selectBlock(referenceBlock.id); store.blockKeyboardFocus = false; store.deleteSelectedBlock()
         check(store.note?.blocks.contains(where: { $0.id == referenceBlock.id }) == true, "Delete does not remove block while editing text")
         let externalURL = root.appendingPathComponent("external.py"); try Data("value = 1\n".utf8).write(to: externalURL)
-        let assetCount = try FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count
+        let assetCount = (try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count) ?? 0
         store.referenceFile(externalURL); let directReferenceBlock = store.block!
         let externalSession = try store.textFileSession(noteID: store.selection!, blockID: directReferenceBlock.id)
         externalSession.edit("value = 2\n"); check(externalSession.save(), "Direct library reference is editable")
         check((try? Data(contentsOf: externalURL)) == Data("value = 2\n".utf8), "Direct reference updates the actual project file")
-        check((try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count) == assetCount, "Direct reference needs no asset copy")
+        check(((try? FileManager.default.contentsOfDirectory(atPath: store.repository.assets.path).count) ?? 0) == assetCount, "Direct reference needs no asset copy")
         try Data("changed elsewhere\n".utf8).write(to: externalURL)
         externalSession.edit("my unsaved edit\n"); check(!externalSession.save(), "Concurrent external modification is not silently overwritten")
         check((try? String(contentsOf: externalURL, encoding: .utf8)) == "changed elsewhere\n", "External competing edit survives")
         check((try? store.backup()) == nil, "Backup reports unresolved file edits")
         let cleanStore = try AppStore(root: root)
         let referenceBackup = try cleanStore.backup(); let restoredPayload = try JSONDecoder().decode(BackupPayload.self, from: referenceBackup.data)
-        check(restoredPayload.workspace.notes.flatMap(\.blocks).allSatisfy { $0.relativeFilePath == nil }, "Backup carries referenced external files for portable restore")
+        check(restoredPayload.assets.isEmpty && restoredPayload.format == 2, "Backup contains only indexes, page data and annotations")
         let importedCopy = restoredPayload.workspace.notes.flatMap(\.blocks).first { $0.id == directReferenceBlock.id }!
-        check(restoredPayload.assets[importedCopy.assetID!.uuidString] == Data("changed elsewhere\n".utf8), "Backup contains actual external reference bytes")
+        check(importedCopy.relativeFilePath == directReferenceBlock.relativeFilePath && importedCopy.assetID == nil, "Backup preserves the direct file path without embedding its bytes")
         store.create(); store.edit { $0.paper = .a4; $0.blocks = [Block(.pdf, frame: Rect(20,20,754,1083))] }
         store.blockSelection = store.note!.blocks[0].id; store.addAnchor(CGPoint(x: 793,y:30)); store.annotate(store.note!.anchors[0])
         check(store.note?.blocks.count == 2 && store.note?.paper.isContinuous == true, "Crowded annotation automatically finds available long-page space")
@@ -322,8 +324,8 @@ private final class HTMLFixtureProtocol: URLProtocol {
         await store.fetchHTML(noteID: linkReferencePage, blockID: linkReferenceID, session: fixtureSession)
         fixtureSession.invalidateAndCancel()
         let captured = store.block!, origin = store.workspace.notes.first { $0.id == linkPage }!.blocks.first { $0.id == linkBlock.id }!
-        check(captured.linkMode == .html && captured.assetID != nil, "HTML capture switches selected link to HTML mode")
-        check((try? Data(contentsOf: store.repository.asset(captured.assetID!))) == HTMLFixtureProtocol.bytes, "HTML capture stores the exact response bytes")
+        check(captured.linkMode == .html && captured.assetID == nil, "HTML capture switches selected link to HTML mode")
+        check(store.linkSnapshots[captured.fileIdentity] == HTMLFixtureProtocol.bytes, "HTML preview keeps the response in memory without a stored attachment")
         check(captured.assetID == origin.assetID && captured.fileIdentity == origin.fileIdentity && origin.linkMode == .card, "Link references share HTML data but choose their own display mode")
         store.setLinkMode(.browser, noteID:linkReferencePage,blockID:linkReferenceID)
         check(store.block?.linkMode == .browser && store.block?.assetID == captured.assetID, "Switching to browser preserves captured HTML")
@@ -481,6 +483,8 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try runFolderOverviewNativeChecks()
         checks += try await runFolderOverviewUINativeChecks()
         checks += try await runNavigationNativeChecks()
+        checks += try runSelectionScrollNativeChecks()
+        checks += try await runStartupNativeChecks()
         checks += try await runAgentNativeChecks()
         print("PASS: \(checks) native editor, model, attachment, PencilKit and agent assertions")
     }

@@ -69,7 +69,7 @@ import Foundation
         let old = try decoder.decode(Block.self, from: JSONSerialization.data(withJSONObject: oldJSON))
         check(!old.usesMarkdown && old.text == markdown.text, "Legacy rich-text document compatibility")
         let styled = Markdown.document("$x$", size: 26, font: "Songti SC", tint: "yellow")
-        check(styled.contains("font-size:26.0px") && styled.contains("Songti SC") && styled.contains("#fff7d9"), "Markdown frame style")
+        check(styled.contains("font-size:26.0px") && styled.contains("Songti SC") && styled.contains("#f5f5f7"), "Markdown frame style")
         print("PASS: \(checks) compiled Swift core assertions")
     }
 }

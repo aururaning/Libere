@@ -26,11 +26,12 @@ final class StorageAndFormulaTests: XCTestCase {
         XCTAssertThrowsError(try repository.load()); XCTAssertThrowsError(try repository.save(first))
         XCTAssertEqual(try Data(contentsOf: repository.workspaceURL), corrupt)
     }
-    func testAssetCopyIsImmutableAndMissingSourceDoesNotCreateReference() throws {
+    func testAttachmentCreationIsRejectedWithoutWritingAnAsset() throws {
         let repository = try temporaryRepository(); let source = repository.root.appendingPathComponent("test.pdf")
-        let id = UUID(); try Data([1, 2]).write(to: source); try repository.copyAsset(source, id: id)
-        try Data([3, 4]).write(to: source); XCTAssertThrowsError(try repository.copyAsset(source, id: id))
-        XCTAssertEqual(try Data(contentsOf: repository.asset(id)), Data([1, 2]))
+        try Data([1, 2]).write(to: source)
+        XCTAssertThrowsError(try repository.copyAsset(source, id: UUID()))
+        XCTAssertEqual(try Data(contentsOf: source), Data([1, 2]))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: repository.assets.path))
         XCTAssertThrowsError(try repository.copyAsset(repository.root.appendingPathComponent("missing"), id: UUID()))
     }
     func testCommonFormulaMathMLAndErrors() throws {
