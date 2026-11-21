@@ -25,6 +25,18 @@ import WebKit
 }
 
 @MainActor enum SelectionWheel {
+    /// Geometry alone is insufficient when a sidebar or inspector overlays the
+    /// detail. Claim input only when AppKit's frontmost hit belongs to this scroll
+    /// view, and only inside its actually visible clip region.
+    static func owns(_ point: NSPoint, in eventWindow: NSWindow?, scroll: NSScrollView) -> Bool {
+        guard point.x.isFinite, point.y.isFinite, let window = scroll.window,
+              eventWindow === window, window.attachedSheet == nil,
+              !scroll.isHiddenOrHasHiddenAncestor, let root = window.contentView,
+              scroll.contentView.visibleRect.contains(scroll.contentView.convert(point, from: nil)) else { return false }
+        let inParent = root.superview?.convert(point, from: nil) ?? point
+        guard let hit = root.hitTest(inParent) else { return false }
+        return hit === scroll || hit.isDescendant(of: scroll)
+    }
     static func scope(_ id: UUID, in root: NSView) -> BlockScrollHost? {
         var queue = [root]
         while let view = queue.popLast() {
@@ -93,7 +105,7 @@ import WebKit
     deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
     func route(_ event: NSEvent) -> Bool {
         guard let store, store.selection == pageID, event.window === window, let outer = enclosingScrollView,
-              outer.contentView.bounds.contains(outer.contentView.convert(event.locationInWindow, from: nil)),
+              SelectionWheel.owns(event.locationInWindow, in: event.window, scroll: outer),
               let content = outer.documentView else { return false }
         if event.type == .leftMouseDown {
             let scope = SelectionWheel.scope(pageID, in: content)
@@ -107,7 +119,7 @@ import WebKit
     }
     func routeScroll(at point: NSPoint, in eventWindow: NSWindow?, delta: CGSize, precise: Bool) -> Bool {
         guard let store, store.selection == pageID, eventWindow === window, let outer = enclosingScrollView,
-              outer.contentView.bounds.contains(outer.contentView.convert(point, from: nil)), let content = outer.documentView else { return false }
+              SelectionWheel.owns(point, in: eventWindow, scroll: outer), let content = outer.documentView else { return false }
         if store.folderBlockSelection == pageID, let scope = SelectionWheel.scope(pageID, in: content),
            SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point) { return true }
         SelectionWheel.scrollPage(outer, delta: delta, precise: precise)

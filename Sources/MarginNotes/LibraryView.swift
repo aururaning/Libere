@@ -144,11 +144,12 @@ struct NoteTree: Identifiable {
                             PageDragRow(store:store,note:item.note) {
                             HStack(spacing: 5) {
                                 if item.hasChildren {
-                                    Button {
+                                    SidebarDisclosureButton(pageID: item.note.id, title: item.note.title,
+                                        expanded: store.expandedPages.contains(item.note.id)) {
                                         if store.expandedPages.contains(item.note.id) { store.expandedPages.remove(item.note.id) }
                                         else { store.expandedPages.insert(item.note.id) }
-                                    } label: { Image(systemName: store.expandedPages.contains(item.note.id) ? "chevron.down" : "chevron.right").font(.system(size: 9, weight: .semibold)).frame(width: 14) }.buttonStyle(.plain)
-                                } else { Color.clear.frame(width: 14, height: 1) }
+                                    }
+                                } else { Color.clear.frame(width: SidebarDisclosureButton.size.width, height: SidebarDisclosureButton.size.height) }
                                 row(item.note)
                             }.padding(.leading, CGFloat(item.depth) * 14)
                             }.tag(item.note.id).id(item.note.id)

@@ -6,6 +6,31 @@ import MarginCore
 
 extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.page-drag",conformingTo:.data) }
 
+@MainActor struct SidebarDisclosureButton: View {
+    let pageID: UUID
+    let title: String
+    let expanded: Bool
+    var toggle: () -> Void
+    #if os(macOS)
+    static let size = CGSize(width: 28, height: 30)
+    #else
+    static let size = CGSize(width: 44, height: 44)
+    #endif
+    var body: some View {
+        #if os(macOS)
+        SidebarDisclosureNative(pageID: pageID, title: title, expanded: expanded, toggle: toggle)
+            .frame(width: Self.size.width, height: Self.size.height)
+        #else
+        Button(action: toggle) {
+            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: Self.size.width, height: Self.size.height).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel((expanded ? "收起" : "展开") + title)
+            .accessibilityValue(expanded ? "已展开" : "已收起")
+        #endif
+    }
+}
+
 @MainActor struct PageDropDelegate: DropDelegate {
     let store: AppStore
     let target: UUID?
@@ -85,6 +110,37 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
 }
 
 #if os(macOS)
+/// An image-only native button still tracks the entire padded rectangle, rather
+/// than limiting the hit area to the tiny chevron's painted pixels.
+@MainActor final class SidebarDisclosureControl: NSButton {
+    var pageID = UUID()
+    var toggle: () -> Void = {}
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        title = ""; isBordered = false; imagePosition = .imageOnly; imageScaling = .scaleNone
+        setButtonType(.momentaryChange); target = self; action = #selector(activate)
+        contentTintColor = .secondaryLabelColor
+    }
+    required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    @objc private func activate() { toggle() }
+    func configure(pageID: UUID, title: String, expanded: Bool, toggle: @escaping () -> Void) {
+        self.pageID = pageID; self.toggle = toggle
+        image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        let label = (expanded ? "收起" : "展开") + title
+        toolTip = label; setAccessibilityLabel(label); setAccessibilityValue(expanded ? "已展开" : "已收起")
+        setAccessibilityIdentifier("sidebar-disclosure-" + pageID.uuidString)
+    }
+}
+@MainActor struct SidebarDisclosureNative: NSViewRepresentable {
+    let pageID: UUID; let title: String; let expanded: Bool; let toggle: () -> Void
+    func makeNSView(context: Context) -> SidebarDisclosureControl { SidebarDisclosureControl(frame: .zero) }
+    func updateNSView(_ view: SidebarDisclosureControl, context: Context) {
+        view.configure(pageID: pageID, title: title, expanded: expanded, toggle: toggle)
+    }
+}
+
 @MainActor final class SidebarKeyRegion: NSView {
     weak var store: AppStore?
     private var monitor: Any?

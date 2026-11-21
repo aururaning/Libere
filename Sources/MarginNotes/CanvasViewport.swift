@@ -163,7 +163,7 @@ import MarginCore
     /// Selection owns wheel routing throughout the page, independent of hover.
     @discardableResult func routeAttachmentScroll(at point: NSPoint, in eventWindow: NSWindow?, delta: CGSize, precise: Bool) -> Bool {
         guard let window, eventWindow === window, !liveMagnifying, pointerInteraction?.isPressed != true,
-              contentView.bounds.contains(contentView.convert(point, from: nil)), pointerInteraction != nil else { return false }
+              SelectionWheel.owns(point, in: eventWindow, scroll: self), pointerInteraction != nil else { return false }
         if let id = pointerInteraction?.selectedScrollBlockID, let scope = SelectionWheel.scope(id, in: host),
            SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point) { return true }
         _ = scrollPaper(delta: delta, precise: precise)
@@ -186,7 +186,7 @@ import MarginCore
     /// Do not consume inline buttons, native text selection, anchors or scrollbars.
     func pointerArea(at point: NSPoint, in eventWindow: NSWindow?) -> CanvasPointerInteraction.Area? {
         guard let window, eventWindow === window, let pointerInteraction, !liveMagnifying,
-              contentView.bounds.contains(contentView.convert(point, from: nil)) else { return nil }
+              SelectionWheel.owns(point, in: eventWindow, scroll: self) else { return nil }
         for scroller in [horizontalScroller, verticalScroller].compactMap({ $0 }) {
             if !scroller.isHidden && scroller.bounds.contains(scroller.convert(point, from: nil)) { return nil }
         }
@@ -202,7 +202,7 @@ import MarginCore
     @discardableResult func beginPointer(at point: NSPoint, in eventWindow: NSWindow?,
                                          area: CanvasPointerInteraction.Area, clickCount: Int) -> Bool {
         guard let window, eventWindow === window, !liveMagnifying,
-              contentView.bounds.contains(contentView.convert(point, from: nil)) else { return false }
+              SelectionWheel.owns(point, in: eventWindow, scroll: self) else { return false }
         return pointerInteraction?.down(at: paper.convert(point, from: nil), area: area,
                                         clickCount: clickCount, scale: magnification) == true
     }
@@ -227,7 +227,7 @@ import MarginCore
     }
     @discardableResult func handleDeskClick(at point: NSPoint, in eventWindow: NSWindow?) -> Bool {
         guard let window, eventWindow === window, didClickDesk != nil,
-              contentView.bounds.contains(contentView.convert(point, from: nil)),
+              SelectionWheel.owns(point, in: eventWindow, scroll: self),
               !paper.bounds.contains(paper.convert(point, from: nil)) else { return false }
         for scroller in [horizontalScroller, verticalScroller].compactMap({ $0 }) {
             if !scroller.isHidden && scroller.bounds.contains(scroller.convert(point, from: nil)) { return false }
