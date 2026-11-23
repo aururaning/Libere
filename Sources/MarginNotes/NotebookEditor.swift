@@ -36,6 +36,7 @@ private final class KernelLines: @unchecked Sendable {
     @Published var runningCell: Int?
     @Published var workingDirectory: URL
     private let write: (Data) throws -> Void
+    var hasUnsavedChanges: Bool { (try? document.serialized()) != saved }
     private var saved: Data
     private var saveTask: Task<Void, Never>?
     private var request: String?

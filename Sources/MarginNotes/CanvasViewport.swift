@@ -191,6 +191,8 @@ import MarginCore
             if !scroller.isHidden && scroller.bounds.contains(scroller.convert(point, from: nil)) { return nil }
         }
         let target = pointerInteraction.hit(at: paper.convert(point, from: nil))
+        if case .block(let id) = target, pointerInteraction.editingBlockID == id,
+           let scope = SelectionWheel.scope(id, in: host), SelectionWheel.editorContains(point, in: scope) { return nil }
         var pending = [host as NSView]
         while let view = pending.popLast() {
             if let surface = view as? CanvasPointerView, surface.area.accepts(target),

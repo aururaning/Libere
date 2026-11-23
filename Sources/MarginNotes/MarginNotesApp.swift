@@ -30,6 +30,8 @@ typealias ViewState<Value> = SwiftUI.State<Value>
                 Button("剪切") { bootstrap.store?.cutFocused() }.keyboardShortcut("x", modifiers: .command)
                 Button("复制") { bootstrap.store?.copyFocused() }.keyboardShortcut("c", modifiers: .command)
                 Button("粘贴") { bootstrap.store?.pasteFocused() }.keyboardShortcut("v", modifiers: .command)
+                Divider()
+                Button("全选框内内容") { bootstrap.store?.selectAllFocused() }.keyboardShortcut("a", modifiers: .command)
             }
             CommandGroup(replacing: .undoRedo) {
                 Button("撤销") { bootstrap.store?.undoFocused() }.keyboardShortcut("z", modifiers: .command)

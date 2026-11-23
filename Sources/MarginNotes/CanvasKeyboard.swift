@@ -3,7 +3,9 @@ import SwiftUI
 @MainActor final class CanvasKeyView: NSView {
     weak var store: AppStore?
     override var acceptsFirstResponder: Bool { true }
+    override func selectAll(_ sender: Any?) { store?.selectAllFocused(in: window) }
     override func keyDown(with event: NSEvent) {
+        if event.charactersIgnoringModifiers?.lowercased() == "a", event.modifierFlags.intersection([.command,.option,.control,.shift]) == .command { selectAll(nil); return }
         if [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
             store?.deleteSelectedBlock()
         } else if event.keyCode == 53 {

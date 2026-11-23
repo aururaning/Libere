@@ -108,7 +108,8 @@ struct NoteTree: Identifiable {
                 store.saveEditors(); store.flush()
             }
         }
-        .onReceive(timer) { _ in if phase == .active { Task { await store.cloud?.refresh() } } }
+        .onReceive(timer) { _ in if phase == .active { Task { await store.cloud?.refresh(); await store.maintainICloudFiles() } } }
+        .task { await store.maintainICloudFiles() }
         .task { if UserDefaults.standard.bool(forKey: "MarginCloudEnabled") { store.enableCloud() } }
         #if os(macOS)
         .frame(minWidth: 980, minHeight: 680)
@@ -117,7 +118,7 @@ struct NoteTree: Identifiable {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             if let id = store.folderOverviewEditingID { store.finishFolderOverviewEditing(noteID: id) }
-            store.stopKernels(); store.flush()
+            store.iCloudFiles.persist(); store.stopKernels(); store.flush()
         }
         #else
         .fullScreenCover(item: $store.readerBlock) { block in
@@ -274,7 +275,7 @@ struct NoteTree: Identifiable {
             Circle().fill(store.saveStatus == "已保存到本机" ? Palette.accent : Color.secondary).frame(width: 5, height: 5)
             Text(store.saveStatus)
             Spacer()
-            Button { if store.cloud == nil { store.enableCloud() } else { Task { await store.cloud?.refresh() } } } label: {
+            Button { if store.cloud == nil { store.enableCloud() } else { Task { await store.cloud?.refresh(); await store.maintainICloudFiles() } } } label: {
                 Label(store.cloudStatus, systemImage: "icloud")
             }.buttonStyle(.plain)
         }.font(.system(size: 10)).foregroundStyle(.secondary).padding(.horizontal, 18).frame(height: 29).background(.background)
@@ -421,6 +422,11 @@ struct NoteTree: Identifiable {
         })
     }
     var body: some View {
+        if let current {
+            ICloudFileGate(files: store.iCloudFiles, url: store.attachmentURL(for: current), close: close) { readerContent }
+        } else { readerContent }
+    }
+    private var readerContent: some View {
         NavigationStack {
             if let current {
                 VStack(spacing: 0) {

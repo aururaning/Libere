@@ -7,6 +7,7 @@ import MarginCore
 @MainActor final class TextFileSession: ObservableObject {
     @Published var document: EditableText
     @Published var status = "已保存"
+    var hasUnsavedChanges: Bool { (try? document.serialized()) != saved }
     private var saved: Data
     private let write: (Data) throws -> Void
     private var saveTask: Task<Void, Never>?

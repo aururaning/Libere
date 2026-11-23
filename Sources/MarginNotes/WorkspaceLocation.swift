@@ -66,6 +66,7 @@ enum WorkspaceLocation {
                 if settings { Spacer(); Button("完成") { dismiss() } }
                 else if bootstrap.error != nil { Button("重试原位置") { bootstrap.restore() } }
             }
+            if settings, let store = bootstrap.store { ICloudStorageSettings(files: store.iCloudFiles) }
             if settings { Text("更换位置会打开所选文件夹中的资料库。搬迁时请移动整个资料库文件夹；索引与批注导出不包含原文件。").font(.caption).foregroundStyle(.secondary) }
         }.padding(32).frame(minWidth: 460, idealWidth: 600, minHeight: 260)
             .fileImporter(isPresented: $choosing, allowedContentTypes: [.folder]) { result in

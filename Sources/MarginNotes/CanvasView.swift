@@ -179,15 +179,13 @@ struct AnchorHitShape: Shape {
             if block.kind != .text { header }
             if block.collapsed != true {
                 BlockScrollScope(id: block.id) {
-                    contents.environment(\.canvasRenderScale, store.zoom)
-                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay {
-                        if store.tool == .select && !editing {
-                            selectionSurface
-                                .padding(.top, block.kind == .text ? 30 : block.kind == .file && AttachmentFormat(filename: block.assetName) != .image ? 28 : 0)
-                                .padding(.bottom, block.kind == .pdf ? CanvasItemGeometry.pdfFooterHeight : 0)
+                    if (block.kind.hasAttachment || block.relativeFilePath != nil), let url = store.attachmentURL(for: block) {
+                        ICloudFileGate(files: store.iCloudFiles, url: url) {
+                            selectableContents.environment(\.canvasRenderScale, store.zoom)
                         }
-                    }
+                    } else { selectableContents.environment(\.canvasRenderScale, store.zoom) }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+
             }
         }
             .frame(width: frame.width, height: frame.height)
@@ -198,7 +196,7 @@ struct AnchorHitShape: Shape {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(selected || snapTarget != nil ? Palette.accent : Color.black.opacity(0.08), lineWidth: selected ? 1.5 : 1))
             .overlay {
-                if block.kind == .text {
+                if block.kind == .text && !editing {
                     #if os(macOS)
                     CanvasPointerSurface(area: .border(block.id))
                     #else
@@ -250,6 +248,16 @@ struct AnchorHitShape: Shape {
                 if block.anchorID != nil { Button("解除批注关联") { store.checkpoint(); store.editBlock(block.id) { $0.anchorID = nil } } }
                 Button("删除内容块", role: .destructive) { store.deleteBlock(block.id) }
             }
+    }
+    private var selectableContents: some View {
+        contents.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay {
+                        if store.tool == .select && !editing {
+                            selectionSurface
+                                .padding(.top, block.kind == .text ? 30 : block.kind == .file && AttachmentFormat(filename: block.assetName) != .image ? 28 : 0)
+                                .padding(.bottom, block.kind == .pdf ? CanvasItemGeometry.pdfFooterHeight : 0)
+                        }
+                    }
     }
     private var header: some View {
         HStack(spacing: 6) {

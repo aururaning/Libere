@@ -73,6 +73,7 @@ enum EditorTool: String, CaseIterable {
     private var finishingFolderOverview = false
     let repository: Repository
     let directories: WorkspaceDirectories
+    lazy var iCloudFiles = ICloudFiles(root: repository.root, preferences: preferences)
     private var notebookSessions: [String: NotebookSession] = [:]
     private var textSessions: [String: TextFileSession] = [:]
     private var referenceStamps: [String: String] = [:]
@@ -282,6 +283,7 @@ enum EditorTool: String, CaseIterable {
     }
     func pdfPageCount(for block: Block) -> Int {
         guard block.kind == .pdf, let url = attachmentURL(for: block),
+              (try? iCloudFiles.requireLocal(url)) != nil,
               let document = PDFDocument(url: url), !document.isLocked else { return 0 }
         return document.pageCount
     }
@@ -635,12 +637,41 @@ enum EditorTool: String, CaseIterable {
         guard let note, let blocks = CanvasLayout.rearranged(note) else { message = "已有手写、批注点、锁定内容或纸张空间不足时，请手动调整，保留批注位置。"; return }
         checkpoint(); edit { $0.blocks = blocks }
     }
+    func maintainICloudFiles() async {
+        let dirty = Set(textSessions.filter { $0.value.hasUnsavedChanges }.keys)
+            .union(notebookSessions.filter { $0.value.hasUnsavedChanges || $0.value.ready || $0.value.busy }.keys)
+        let protectLibrary = notebookSessions.values.contains { ($0.ready || $0.busy) && $0.workingDirectory.standardizedFileURL == repository.root.standardizedFileURL }
+        let runningDirectories = notebookSessions.values.filter { $0.ready || $0.busy }.compactMap {
+            ReferencePath.relative($0.workingDirectory, inside: repository.root).map { $0 + "/" }
+        }
+        var indexed: Set<String> = [], protected: Set<String> = []
+        for page in workspace.notes {
+            for block in page.blocks {
+                guard let path = block.relativeFilePath else { continue }
+                indexed.insert(path)
+                if protectLibrary || page.id == selection || dirty.contains(block.fileIdentity.uuidString) || runningDirectories.contains(where: { path.hasPrefix($0) }) {
+                    protected.insert(path)
+                }
+            }
+        }
+        await iCloudFiles.maintain(indexedPaths: indexed, protectedPaths: protected, isProtected: { [weak self] path in
+            guard let self else { return true }
+            if self.note?.blocks.contains(where: { $0.relativeFilePath == path }) == true { return true }
+            return self.notebookSessions.values.contains { session in
+                guard session.ready || session.busy else { return false }
+                if session.workingDirectory.standardizedFileURL == self.repository.root.standardizedFileURL { return true }
+                guard let directory = ReferencePath.relative(session.workingDirectory, inside: self.repository.root) else { return false }
+                return path.hasPrefix(directory + "/")
+            }
+        })
+    }
     func enableCloud() { if cloud == nil { cloud = CloudSync(store: self) }; cloud?.start() }
 
     func notebookSession(noteID: UUID, blockID: UUID) throws -> NotebookSession {
         guard let note = workspace.notes.first(where: { $0.id == noteID }), let block = note.blocks.first(where: { $0.id == blockID }),
               AttachmentFormat(filename: block.assetName) == .notebook, let url = attachmentURL(for: block) else { throw StoreError.corrupt }
         let key = block.fileIdentity.uuidString
+        try iCloudFiles.requireLocal(url)
         if let existing = notebookSessions[key] { return existing }
         let source = try Data(contentsOf: url)
         if let path = block.relativeFilePath { referenceStamps[path] = Self.referenceStamp(url) }
@@ -658,6 +689,7 @@ enum EditorTool: String, CaseIterable {
               AttachmentFormat(filename: block.assetName)?.isTextEditable == true,
               let url = attachmentURL(for: block) else { throw StoreError.corrupt }
         let key = block.fileIdentity.uuidString
+        try iCloudFiles.requireLocal(url)
         if let existing = textSessions[key] { return existing }
         let source = try Data(contentsOf: url)
         if let path = block.relativeFilePath { referenceStamps[path] = Self.referenceStamp(url) }

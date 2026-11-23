@@ -45,6 +45,7 @@ import MarginCore
     private var lastClick: (noteID: UUID, target: CanvasHitTarget)?
     @Published private(set) var preview: Preview?
     var isPressed: Bool { press != nil }
+    var editingBlockID: UUID? { store?.editingBlockID }
     var pressedBlockID: UUID? { press?.blockID }
     var selectedScrollBlockID: UUID? {
         guard let store, let block = store.block, block.collapsed != true else { return nil }

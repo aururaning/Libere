@@ -86,13 +86,21 @@ extension AppStore {
     }
     func indexedBlock(at url: URL) throws -> Block {
         let path = try FileIndexPolicy.path(for: url, inside: repository.root)
+        // Register an existing cloud placeholder without reading its bytes. The
+        // normal preview validates the document after an explicit download.
+        let availability = try ICloudFileSnapshot.read(url)
+        let deferredValidation = availability.ubiquitous && !availability.local
         let kind: BlockKind
         if url.pathExtension.lowercased() == "pdf" {
-            guard let pdf = PDFDocument(url: url), pdf.pageCount > 0, !pdf.isLocked else { throw StoreError.corrupt }
+            if !deferredValidation {
+                guard let pdf = PDFDocument(url: url), pdf.pageCount > 0, !pdf.isLocked else { throw StoreError.corrupt }
+            }
             kind = .pdf
         } else if let format = AttachmentFormat(filename: url.lastPathComponent) {
-            if format == .image { try AttachmentImage.validate(at: url) }
-            if format == .notebook { _ = try NotebookDocument(data: Data(contentsOf: url)) }
+            if !deferredValidation {
+                if format == .image { try AttachmentImage.validate(at: url) }
+                if format == .notebook { _ = try NotebookDocument(data: Data(contentsOf: url)) }
+            }
             kind = .file
         } else { throw NSError(domain: "FileIndex", code: 1, userInfo: [NSLocalizedDescriptionKey: "暂不支持这个文件类型。"]) }
         var block = Block(kind, frame: Rect(28, 28, 380, 500))

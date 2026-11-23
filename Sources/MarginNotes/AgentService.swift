@@ -272,6 +272,8 @@ import MarginCore
         guard let url = store.attachmentURL(for:block), FileManager.default.fileExists(atPath:url.path) else {
             throw AgentFailure(404,"asset_unavailable","附件还未下载，或该链接尚未保存 HTML。")
         }
+        do { try store.iCloudFiles.requireLocal(url) }
+        catch { throw AgentFailure(409, "download_required", "请先在 Libere 预览中下载这个 iCloud 文件，再读取内容。") }
         let size = (try url.resourceValues(forKeys:[.fileSizeKey])).fileSize ?? 0
         guard size <= AgentLimits.attachmentBytes else { throw AgentFailure(413,"asset_too_large","此附件超过 API 单次读取上限，请在应用中查看。") }
         let data = try Data(contentsOf:url)

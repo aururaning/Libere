@@ -12,7 +12,8 @@ import MarginCore
         VStack(spacing: 0) {
             HStack(spacing: 10) {
                 #if os(macOS)
-                CanvasPointerSurface(area: .body(block.id))
+                if editing { Color.clear }
+                else { CanvasPointerSurface(area: .body(block.id)) }
                 #else
                 Color.clear.contentShape(Rectangle())
                     .gesture(SpatialTapGesture(coordinateSpace: .named("note-paper")).onEnded { store.tapCanvas(at: $0.location) })

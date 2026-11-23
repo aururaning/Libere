@@ -3,7 +3,7 @@ import Foundation
 /// Offline Markdown and math renderer. Raw HTML is always escaped; no remote scripts or assets are loaded.
 public enum Markdown {
     public static func body(_ source: String) -> String {
-        return blocks(source.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n"), depth: 0)
+        return blocks(source.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").components(separatedBy: "\n"), depth: 0)
     }
     public static func document(_ source: String, size: Double = 18, font: String? = nil, tint: String = "paper") -> String {
         let family: String
@@ -33,9 +33,9 @@ public enum Markdown {
         </style></head><body><div id="libere-content">\(body(source))</div></body></html>
         """
     }
-    private static func math(_ source: String, display: Bool) -> String {
+    private static func math(_ source: String, display: Bool, original: String? = nil) -> String {
         do { return try Formula.render(source, display: display) }
-        catch { return "<span class=\"math-error\" title=\"\(Formula.escape(error.localizedDescription))\">\(Formula.escape((display ? "$$" : "$") + source + (display ? "$$" : "$")))</span>" }
+        catch { return "<span class=\"math-error\" title=\"\(Formula.escape(error.localizedDescription))\">\(Formula.escape(original ?? ((display ? "$$" : "$") + source + (display ? "$$" : "$"))))</span>" }
     }
     private static func heading(_ line: String) -> (Int, String)? {
         let marks = line.prefix { $0 == "#" }.count
@@ -52,10 +52,86 @@ public enum Markdown {
         }
         return nil
     }
+    private struct MathSpan {
+        let source: String
+        let original: String
+        let end: Int
+        let display: Bool
+    }
+    private static func matches(_ token: String, in chars: [Character], at index: Int) -> Bool {
+        let token = Array(token)
+        return index + token.count <= chars.count && chars[index..<(index + token.count)].elementsEqual(token)
+    }
+    private static func mathSpan(_ chars: [Character], at start: Int, backslashDelimiters: Bool = true) -> MathSpan? {
+        let opening: String, closing: String, display: Bool
+        if matches("$$", in: chars, at: start) { opening = "$$"; closing = "$$"; display = true }
+        else if backslashDelimiters, matches("\\[", in: chars, at: start) { opening = "\\["; closing = "\\]"; display = true }
+        else if backslashDelimiters, matches("\\(", in: chars, at: start) { opening = "\\("; closing = "\\)"; display = false }
+        else if chars[start] == "$" { opening = "$"; closing = "$"; display = false }
+        else { return nil }
+        let contentStart = start + opening.count
+        guard contentStart < chars.count else { return nil }
+        if opening == "$", chars[contentStart].isWhitespace { return nil }
+        var i = contentStart
+        while i < chars.count {
+            if opening == "$", chars[i] == "\n" { return nil }
+            if matches(closing, in: chars, at: i) {
+                if closing == "$" {
+                    if chars[i - 1].isWhitespace || (i + 1 < chars.count && chars[i + 1].isNumber) { return nil }
+                }
+                guard i > contentStart else { return nil }
+                let end = i + closing.count
+                return MathSpan(source: String(chars[contentStart..<i]), original: String(chars[start..<end]), end: end, display: display)
+            }
+            if chars[i] == "\\" { i += min(2, chars.count - i) } else { i += 1 }
+        }
+        return nil
+    }
+    private static func codeSpan(_ chars: [Character], at start: Int) -> (source: String, end: Int)? {
+        guard chars[start] == "`" else { return nil }
+        var width = 0
+        while start + width < chars.count, chars[start + width] == "`" { width += 1 }
+        var i = start + width
+        while i < chars.count {
+            guard chars[i] == "`" else { i += 1; continue }
+            var count = 0
+            while i + count < chars.count, chars[i + count] == "`" { count += 1 }
+            if count == width {
+                var source = String(chars[(start + width)..<i]).replacingOccurrences(of: "\n", with: " ")
+                if source.hasPrefix(" "), source.hasSuffix(" "), source.contains(where: { $0 != " " }) { source = String(source.dropFirst().dropLast()) }
+                return (source, i + width)
+            }
+            i += count
+        }
+        return nil
+    }
+    private static func fence(_ line: String) -> (character: Character, count: Int)? {
+        guard let first = line.first, first == "`" || first == "~" else { return nil }
+        let count = line.prefix { $0 == first }.count
+        return count >= 3 ? (first, count) : nil
+    }
     private static func tableCells(_ line: String) -> [String] {
-        var value = line.trimmingCharacters(in: .whitespaces)
-        if value.hasPrefix("|") { value.removeFirst() }; if value.hasSuffix("|") { value.removeLast() }
-        return value.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+        var chars = Array(line.trimmingCharacters(in: .whitespaces))
+        if chars.first == "|" { chars.removeFirst() }
+        if chars.last == "|" {
+            let escapes = chars.dropLast().reversed().prefix { $0 == "\\" }.count
+            if escapes % 2 == 0 { chars.removeLast() }
+        }
+        var cells: [String] = [], cell = "", i = 0
+        while i < chars.count {
+            let end = mathSpan(chars, at: i)?.end ?? codeSpan(chars, at: i)?.end
+            if let end { cell += String(chars[i..<end]); i = end; continue }
+            if chars[i] == "`" {
+                repeat { cell.append(chars[i]); i += 1 } while i < chars.count && chars[i] == "`"
+                continue
+            }
+            if chars[i] == "\\", i + 1 < chars.count { cell += String(chars[i...(i + 1)]); i += 2; continue }
+            if chars[i] == "|" { cells.append(cell.trimmingCharacters(in: .whitespaces)); cell = "" }
+            else { cell.append(chars[i]) }
+            i += 1
+        }
+        cells.append(cell.trimmingCharacters(in: .whitespaces))
+        return cells
     }
     private static func isTableRule(_ line: String) -> Bool {
         let cells = tableCells(line)
@@ -66,7 +142,7 @@ public enum Markdown {
     }
     private static func isBoundary(_ line: String) -> Bool {
         let t = line.trimmingCharacters(in: .whitespaces)
-        return t.isEmpty || heading(t) != nil || listItem(t) != nil || t.hasPrefix(">") || t.hasPrefix("```") || t.hasPrefix("$$") || ["---","***","___"].contains(t)
+        return t.isEmpty || heading(t) != nil || listItem(t) != nil || t.hasPrefix(">") || fence(t) != nil || t.hasPrefix("$$") || t.hasPrefix("\\[") || ["---","***","___"].contains(t)
     }
     private static func blocks(_ lines: [String], depth: Int) -> String {
         guard depth < 12 else { return "<p>\(Formula.escape(lines.joined(separator: "\n")))</p>" }
@@ -74,30 +150,27 @@ public enum Markdown {
         while i < lines.count {
             let line = lines[i].trimmingCharacters(in: .whitespaces)
             if line.isEmpty { i += 1; continue }
-            if line.hasPrefix("```") {
+            if let opening = fence(line) {
                 i += 1; var code: [String] = []
-                while i < lines.count && !lines[i].trimmingCharacters(in: .whitespaces).hasPrefix("```") { code.append(lines[i]); i += 1 }
+                while i < lines.count {
+                    let candidate = lines[i].trimmingCharacters(in: .whitespaces)
+                    if let close = fence(candidate), close.character == opening.character, close.count >= opening.count,
+                       candidate.dropFirst(close.count).trimmingCharacters(in: .whitespaces).isEmpty { break }
+                    code.append(lines[i]); i += 1
+                }
                 if i < lines.count { i += 1 }
                 html += "<pre><code>\(Formula.escape(code.joined(separator: "\n")))</code></pre>"; continue
             }
-            if line.hasPrefix("$$") {
-                var content = String(line.dropFirst(2)); i += 1
-                if let end = content.range(of: "$$") {
-                    html += math(String(content[..<end.lowerBound]), display: true)
-                    let rest = String(content[end.upperBound...]); if !rest.isEmpty { html += "<p>\(inline(rest))</p>" }
-                } else {
-                    var closed = false
-                    while i < lines.count {
-                        if let end = lines[i].range(of: "$$") {
-                            content += "\n" + String(lines[i][..<end.lowerBound]); let rest = String(lines[i][end.upperBound...]); i += 1
-                            html += math(content, display: true)
-                            if !rest.isEmpty { html += "<p>\(inline(rest))</p>" }; closed = true; break
-                        }
-                        content += "\n" + lines[i]; i += 1
-                    }
-                    if !closed { html += "<p>\(Formula.escape("$$" + content))</p>" }
+            if line.hasPrefix("$$") || line.hasPrefix("\\[") {
+                let remaining = line + (i + 1 < lines.count ? "\n" + lines[(i + 1)...].joined(separator: "\n") : "")
+                let chars = Array(remaining)
+                if let span = mathSpan(chars, at: 0), span.display {
+                    html += math(span.source, display: true, original: span.original)
+                    i += chars[..<span.end].filter { $0 == "\n" }.count + 1
+                    let rest = String(chars[span.end...].prefix { $0 != "\n" })
+                    if !rest.trimmingCharacters(in: .whitespaces).isEmpty { html += "<p>\(inline(rest))</p>" }
+                    continue
                 }
-                continue
             }
             if let (level, text) = heading(line) { html += "<h\(level)>\(inline(text))</h\(level)>"; i += 1; continue }
             if ["---", "***", "___"].contains(line) { html += "<hr>"; i += 1; continue }
@@ -137,45 +210,65 @@ public enum Markdown {
         return html
     }
     public static func inline(_ source: String) -> String { inline(source, depth: 0) }
-    private static func inline(_ source: String, depth: Int) -> String {
+    private static func inline(_ source: String, depth: Int, backslashMath: Bool = true) -> String {
         guard depth < 12 else { return Formula.escape(source) }
         let chars = Array(source); var i = 0; var result = ""
         func matches(_ token: String, _ at: Int) -> Bool {
             let part = Array(token); return at + part.count <= chars.count && Array(chars[at..<(at + part.count)]) == part
         }
-        func closing(_ token: String, from start: Int) -> Int? {
+        func closing(_ token: String, from start: Int, protectingContent: Bool = false) -> Int? {
             var j = start
             while j < chars.count {
+                if protectingContent, let end = mathSpan(chars, at: j, backslashDelimiters: backslashMath)?.end ?? codeSpan(chars, at: j)?.end { j = end; continue }
+                if protectingContent, chars[j] == "`" {
+                    repeat { j += 1 } while j < chars.count && chars[j] == "`"
+                    continue
+                }
                 if chars[j] == "\\" { j += 2; continue }
-                if matches(token, j) { return j }; j += 1
+                if matches(token, j) {
+                    if token.contains("_"), j > 0, j + token.count < chars.count,
+                       chars[j - 1].isLetter || chars[j - 1].isNumber,
+                       chars[j + token.count].isLetter || chars[j + token.count].isNumber { j += token.count; continue }
+                    return j
+                }
+                j += 1
             }
             return nil
         }
         while i < chars.count {
+            if let span = mathSpan(chars, at: i, backslashDelimiters: backslashMath) {
+                result += math(span.source, display: span.display, original: span.original); i = span.end; continue
+            }
+            if matches("$$", i) || (backslashMath && (matches("\\[", i) || matches("\\(", i))) {
+                result += Formula.escape(String(chars[i..<(i + 2)])); i += 2; continue
+            }
             if chars[i] == "\\", i + 1 < chars.count, "\\`*_{}[]()#+-.!$|~=".contains(chars[i + 1]) {
                 result += Formula.escape(String(chars[i + 1])); i += 2; continue
             }
+            if let code = codeSpan(chars, at: i) {
+                result += "<code>\(Formula.escape(code.source))</code>"; i = code.end; continue
+            }
             if chars[i] == "`" {
-                let token = matches("``", i) ? "``" : "`"
-                if let end = closing(token, from: i + token.count) { result += "<code>\(Formula.escape(String(chars[(i + token.count)..<end])))</code>"; i = end + token.count; continue }
+                repeat { result.append(chars[i]); i += 1 } while i < chars.count && chars[i] == "`"
+                continue
             }
-            if chars[i] == "$" {
-                let token = matches("$$", i) ? "$$" : "$"
-                if let end = closing(token, from: i + token.count), end > i + token.count {
-                    result += math(String(chars[(i + token.count)..<end]), display: token.count == 2); i = end + token.count; continue
-                }
-            }
-            if chars[i] == "[", let labelEnd = closing("](", from: i + 1), let urlEnd = closing(")", from: labelEnd + 2) {
+            if chars[i] == "[", let labelEnd = closing("](", from: i + 1, protectingContent: true), let urlEnd = closing(")", from: labelEnd + 2) {
                 let label = String(chars[(i + 1)..<labelEnd]), link = String(chars[(labelEnd + 2)..<urlEnd])
                 if let url = URL(string: link), ["https", "http", "mailto"].contains(url.scheme?.lowercased() ?? "") || PageLink.noteID(in: url) != nil {
-                    result += "<a href=\"\(Formula.escape(link))\" rel=\"noreferrer\">\(inline(label, depth: depth + 1))</a>"
-                } else { result += inline(label, depth: depth + 1) }
+                    // Generated page links escape punctuation in user titles. A
+                    // bracket/parenthesis escape there is a label, not TeX syntax.
+                    let labelMath = backslashMath && PageLink.noteID(in: url) == nil
+                    result += "<a href=\"\(Formula.escape(link))\" rel=\"noreferrer\">\(inline(label, depth: depth + 1, backslashMath: labelMath))</a>"
+                } else { result += inline(label, depth: depth + 1, backslashMath: backslashMath) }
                 i = urlEnd + 1; continue
             }
             var formatted = false
             for (token, tag) in [("**","strong"),("__","strong"),("~~","del"),("==","mark"),("*","em"),("_","em")] {
-                if matches(token, i), let end = closing(token, from: i + token.count), end > i + token.count {
-                    result += "<\(tag)>\(inline(String(chars[(i + token.count)..<end]), depth: depth + 1))</\(tag)>"; i = end + token.count; formatted = true; break
+                if token.contains("_"), i > 0, i + token.count < chars.count,
+                   chars[i - 1].isLetter || chars[i - 1].isNumber,
+                   chars[i + token.count].isLetter || chars[i + token.count].isNumber { continue }
+                if matches(token, i), let end = closing(token, from: i + token.count, protectingContent: true), end > i + token.count {
+                    result += "<\(tag)>\(inline(String(chars[(i + token.count)..<end]), depth: depth + 1, backslashMath: backslashMath))</\(tag)>"; i = end + token.count; formatted = true; break
                 }
             }
             if formatted { continue }

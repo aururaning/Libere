@@ -37,6 +37,11 @@ import WebKit
         guard let hit = root.hitTest(inParent) else { return false }
         return hit === scroll || hit.isDescendant(of: scroll)
     }
+    static func editorContains(_ point: NSPoint, in view: NSView) -> Bool {
+        guard !view.isHiddenOrHasHiddenAncestor else { return false }
+        if let text = view as? NSTextView, text.isEditable, text.visibleRect.contains(text.convert(point, from: nil)) { return true }
+        return view.subviews.contains { editorContains(point, in: $0) }
+    }
     static func scope(_ id: UUID, in root: NSView) -> BlockScrollHost? {
         var queue = [root]
         while let view = queue.popLast() {

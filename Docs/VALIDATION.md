@@ -1,12 +1,10 @@
-# 验证记录 · Libere 0.6.12
+# 验证记录 · Libere 0.6.13
 
-2026-11-21，Apple Silicon Mac，Xcode 27.2；build 24。
+2026-11-23，Apple Silicon Mac，Xcode 27.2，build 25。
 
-- 89 项 XCTest、18 项 Agent 桥接测试通过；Mac、iPad Simulator、iPad device SDK 均构建成功。
-- 优化编译原生回归 1351 项通过，包含本轮新增 20 项侧栏区域与展开按钮检查。
-- 先用侧栏覆盖主页面的原生窗口复现：旧版画布误消费侧栏滚轮。修复后，未选块/选中块、正反方向、隐藏画布及文件夹介绍均正确拒绝侧栏事件；真正的主页面仍可滚动。
-- 生产 LibraryView 中的真实展开按钮达到 28×30 点，四角留白均可命中；展开/收起保留当前页面选择及文件夹内容。iPad 按钮区域为 44×44 点，通过 SDK 编译。
-- 既有画布拖动、五档缩放、PDF、手写、文件移动/撤销及选择驱动块内滚动回归通过。
-- Mac App 和 PKG 的 16 个文件逐项核验一致，严格签名校验通过。源码与已验证构建对应；未执行安装器或重启用户应用。
+- XCTest：109 项通过；Agent 桥接：18 项通过；工程结构57个Swift源文件。Mac/iPad Simulator/iPad device SDK 构建通过。
+- 原生回归：1430 项通过，包含32项选中框全选/Unicode/五档缩放顶部三行命中/迟到请求取消、46项iCloud访问与下载/释放安全检查；编辑时改用外侧拖柄，边缘让给文字选择。
+- Markdown13、Formula10、PageLink3项专项通过。8个实际WebKit公式布局和3个mtext空白宽度案例通过，截图已目视。可重复脚本 Scripts/MathRenderChecks.swift。
+- iCloud检查用注入操作验证7天边界、首次登记无全库文件读取、分批上限、开关、上传/冲突/编辑保护、两次检查间新增内核保护、关闭时重新计时、重启账本、显式下载成功/失败；另验证真实非iCloud文件绝不释放。未调用删除原件API。
 
-原生窗口和控件回归不等于实机鼠标/触控板手感验收。目录书签与真实 loopback 通信测试保持明确跳过；iPad/Pencil 与 iCloud 双设备未实测。安装包为 ad-hoc 临时签名，未进行 Apple 公证。
+原生日志 .build/validation/native-0.6.13-debug.log 与 native-0.6.13-final.log；SDK/XCTest日志 check-0.6.13-final.log。公式渲染证据 math-render.json/png/log。真实iCloud账号和设备交互未实测；目录书签、真实loopback通信保持明确跳过，不计入通过数量。未修改或重启用户当前应用，未对用户资料执行释放。
