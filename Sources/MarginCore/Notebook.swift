@@ -39,6 +39,14 @@ public struct NotebookDocument {
     }
     public func index(ofCellID id: String) -> Int? { runtimeCellIDs.firstIndex(of: id) }
     public func serialized() throws -> Data { try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]) }
+    /// Structural undo must restore the identities currently used by editors,
+    /// including legacy cells without an on-disk id. The live document remains
+    /// unchanged until the user actually performs the structural operation.
+    public func cellHistorySnapshot() throws -> Data {
+        var snapshot = self
+        snapshot.prepareStructure()
+        return try snapshot.serialized()
+    }
     public static func text(_ value: Any?) -> String { (value as? String) ?? (value as? [String])?.joined() ?? "" }
     public mutating func setSource(_ source: String, at index: Int) {
         var cells = rawCells; guard cells.indices.contains(index) else { return }

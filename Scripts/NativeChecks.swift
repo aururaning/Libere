@@ -24,6 +24,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
         if CommandLine.arguments.contains("--scroll-regions-only") { _ = try await runScrollRegionNativeChecks(); return }
         if CommandLine.arguments.contains("--content-selection-only") { _ = try await runContentSelectionNativeChecks(); return }
         if CommandLine.arguments.contains("--batch-only") { _ = try runCanvasBatchNativeChecks(); return }
+        if CommandLine.arguments.contains("--reader-fixes-only") { _ = try await runInspectorReaderNativeChecks(); _ = try await runReaderReflowNativeChecks(); _ = try await runNotebookEditorIdentityNativeChecks(); return }
         var checks = 0
         func check(_ result: @autoclosure () -> Bool, _ label: String) {
             precondition(result(), label); checks += 1
@@ -492,6 +493,9 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runClipboardLinksNativeChecks()
         checks += try await runPageManagementNativeChecks()
         checks += try await runReaderNotebookNativeChecks()
+        checks += try await runInspectorReaderNativeChecks()
+        checks += try await runReaderReflowNativeChecks()
+        checks += try await runNotebookEditorIdentityNativeChecks()
         checks += try runSelectionScrollNativeChecks()
         checks += try await runScrollRegionNativeChecks()
         checks += try await runStartupNativeChecks()

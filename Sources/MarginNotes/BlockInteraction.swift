@@ -46,12 +46,13 @@ import MarginCore
     }
 
     func openAttachment(_ block: Block, page: Int? = nil, fullScreen: Bool = false) {
-        guard attachmentURL(for: block) != nil, let note else { return }
+        guard let note, let current = note.blocks.first(where: { $0.id == block.id }),
+              attachmentURL(for: current) != nil else { return }
         finishBlockEditing()
         #if os(macOS)
-        PDFWindow.shared.open(store: self, noteID: note.id, block: block, page: page, fullScreen: fullScreen)
+        PDFWindow.shared.open(store: self, noteID: note.id, block: current, page: page, fullScreen: fullScreen)
         #else
-        readerInitialPage = page; readerBlock = block
+        readerInitialPage = page; readerBlock = current
         #endif
     }
     /// Only one content editor owns the keyboard. Commit before changing its page or selection.

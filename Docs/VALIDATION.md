@@ -1,19 +1,13 @@
-# 验证记录 · Libere 0.7.0
+# 验证记录 · Libere 0.7.1
 
-2026-11-24，Apple Silicon Mac，Xcode 27.2，build 26。
+2026-11-24，Apple Silicon Mac，Xcode 27.2，build 27。
 
-| 检查 | 最终结果 |
-| --- | --- |
-| XCTest | 132 项通过，0 失败 |
-| 原生回归（优化编译） | 1568 项通过 |
-| Agent 桥接 | 18 项通过 |
-| Apple SDK | Mac、iPad Simulator、iPad device 全部 BUILD SUCCEEDED |
-| 工程结构 | 71 个 Swift 源文件各包含一次 |
+- 133 项 XCTest、1636 项优化编译原生检查、18 项桥接测试通过；Mac、iPad Simulator、iPad device SDK 均构建成功。
+- 8 项阅读入口检查覆盖AppStore统一入口、shared reader复用、无Mac sheet状态及打开前保存。Inspector按钮绑定和Mac旧sheet移除已逐项检查；隐藏SwiftUI窗口无可用AX按钮树，未声称自动点击了该按钮。
+- 37 项折行检查覆盖100%/150%/200%真实文档宽高、TextKit折行增加、无横向溢出、Notebook工具栏不缩放、原生编辑器/undoManager复用、选区、IME和原生pinch结束。
+- 23 项单元编辑器身份检查覆盖插入、删除别格、移动、清输出、legacy首次结构undo、Markdown与代码末格Shift+Enter。检查实际NSTextView及undoManager对象、原生undo/redo结果，并保留删除/转换/恢复后旧回调拒绝保护。
+- NotebookOperationsTests 6项通过；新增历史快照检查证明保留运行时cellID且不修改尚未编辑的live JSON。
 
-新增或扩展检查涵盖：多选整组事务与五档缩放搜索定位；Clipboard/Wiki/Finder固定目标/真实WK链接；标题IME与物理改名/撤销/冲突/迟到提交；回收站确认与永久清除防复活；锁定删除；RTF真实字体、连续字号及自动增高单undo；阅读窗复用、页码和键盘、关闭失败保留、非key窗口IME先提交后判定；Notebook单元结构、busy输入与稳定ID/代次抵御迟到编辑；iCloud手动批量释放的安全条件。
+证据：.build/validation/check-0.7.1.log、native-0.7.1.log、reader-reflow-native.log、notebook-identity-native.log。新独立入口InspectorReaderNativeChecks、ReaderReflowNativeChecks、NotebookEditorIdentityNativeChecks已纳入总回归。
 
-全部测试在合成资料库执行，未对用户资料执行删除/永久清除/释放，也未重启用户应用。首轮与收尾失败记录保留：字体系统名写入RTF后规范化为HelveticaNeue，曾误记no-op撤销；已按实际持久化字体身份修正。单元结构变更后旧index回调已改为稳定ID+代次并覆盖真实marked-text拆卸。新资料格式3及最小永久清除标记通过旧备份/历史/previous/迟到保存/Agent重试过滤。
-
-本机证据：.build/validation/check-0.7.0-release.log、native-0.7.0-release.log。新增原生入口在CanvasBatchNativeChecks、ClipboardLinksNativeChecks、PageManagementNativeChecks、ReaderNotebookNativeChecks；新增Core测试在CanvasBatchTests、PermanentDeletionTests、NotebookOperationsTests、SearchAndLinksTests。
-
-原生与离屏验证不等于真实设备操作验收。目录书签和真实loopback通信保持明确跳过，不计入通过数量；真实iCloud双设备、Pencil/Sidecar未验收。安装包仅本地临时签名、未Apple公证。
+全部测试使用独立合成文件。未改动用户资料、未重启或替换系统中正在运行的应用。原生回归不等于实际设备手势手感验收；目录书签、真实loopback和iCloud双设备仍未实测。安装包采用本地临时签名，未Apple发行签名或公证。

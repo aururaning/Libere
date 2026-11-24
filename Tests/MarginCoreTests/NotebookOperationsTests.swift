@@ -2,6 +2,15 @@ import XCTest
 @testable import MarginCore
 
 final class NotebookOperationsTests: XCTestCase {
+    func testCellHistorySnapshotKeepsLegacyIdentitiesWithoutChangingLiveJSON() throws {
+        let bytes = Data(#"{"nbformat":4,"cells":[{"cell_type":"code","source":"first","metadata":{},"outputs":[]},{"cell_type":"code","source":"second","metadata":{},"outputs":[]}]}"#.utf8)
+        let document = try NotebookDocument(data: bytes), before = try document.serialized()
+        let restored = try NotebookDocument(data: document.cellHistorySnapshot())
+        XCTAssertEqual(restored.cells.map(\.id), document.cells.map(\.id))
+        XCTAssertEqual(restored.cells.map(\.source), document.cells.map(\.source))
+        XCTAssertEqual(try document.serialized(), before)
+        XCTAssertTrue(((try JSONSerialization.jsonObject(with: before) as! [String:Any])["cells"] as! [[String:Any]]).allSatisfy { $0["id"] == nil })
+    }
     func testLegacyRuntimeIdentitiesRemainStableWithoutChangingUntouchedJSON() throws {
         let original = Data(#"{"nbformat":4,"cells":[{"cell_type":"code","source":"first","metadata":{},"outputs":[]},{"cell_type":"code","source":"second","metadata":{},"outputs":[]}]}"#.utf8)
         var doc = try NotebookDocument(data: original)

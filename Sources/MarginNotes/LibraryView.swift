@@ -128,9 +128,6 @@ struct NoteTree: Identifiable {
         .task { if UserDefaults.standard.bool(forKey: "MarginCloudEnabled") { store.enableCloud() } }
         #if os(macOS)
         .frame(minWidth: 980, minHeight: 680)
-        .sheet(item: $store.readerBlock) { block in
-            if let id = store.selection { AttachmentReader(store: store, noteID: id, block: block).frame(minWidth: 760, minHeight: 560) }
-        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             if let id = store.folderOverviewEditingID { store.finishFolderOverviewEditing(noteID: id) }
             store.iCloudFiles.persist(); store.stopKernels(); store.flush()
@@ -399,7 +396,7 @@ struct NoteTree: Identifiable {
                         Stepper("字号 \(Int(block.fontSize))", value: Binding(get: { block.fontSize }, set: { value in store.editBlock(block.id) { $0.fontSize = value } }), in: 12...64, step: 2)
                     }
                     if block.kind.hasAttachment {
-                        Button("阅读与页内批注", systemImage: "pencil.and.outline") { store.readerBlock = block }
+                        Button("阅读与页内批注", systemImage: "pencil.and.outline") { store.openAttachment(block) }
                         Text("附件内的手写与文字按页保存。下方批注点属于页外，翻页时保持原位。").font(.caption).foregroundStyle(.secondary)
                     }
                     anchorControls(block)

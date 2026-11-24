@@ -39,6 +39,7 @@ private final class KernelLines: @unchecked Sendable {
     @Published private(set) var structureGeneration = UUID()
     @Published private(set) var cellUndoAvailable = false
     private var cellUndo: [Data] = []
+    private var editorTokens: [String: UUID] = [:]
     private var advanceAfterRun: String?
     @Published var workingDirectory: URL
     private let write: (Data) throws -> Void
@@ -60,6 +61,7 @@ private final class KernelLines: @unchecked Sendable {
     init(data: Data, directory: URL, bridge: URL? = nil, save: @escaping (Data) throws -> Void) throws {
         let parsed = try NotebookDocument(data: data)
         document = parsed; saved = try parsed.serialized()
+        editorTokens = Dictionary(uniqueKeysWithValues: parsed.cells.map { ($0.id, UUID()) })
         workingDirectory = directory; bridgeOverride = bridge; write = save
         kernel = parsed.kernelName ?? "python3"
         let preferred = UserDefaults.standard.string(forKey: "MarginNotebookPython")
@@ -74,12 +76,39 @@ private final class KernelLines: @unchecked Sendable {
             if !Task.isCancelled { self?.save() }
         }
     }
-    /// UI callbacks own a cell identity and a structural generation, never an
-    /// index that can point to another cell after a move, deletion or undo.
+    /// Compatibility for callers tied to a whole structural snapshot. Production
+    /// source editors use the cell-lifetime token below instead of this epoch.
     @discardableResult func edit(_ source: String, cellID: String, generation: UUID) -> Bool {
         guard !busy, generation == structureGeneration,
               let index = document.index(ofCellID: cellID) else { return false }
         edit(source, at: index); return true
+    }
+    /// Unlike the structural command generation, this token belongs to one cell
+    /// incarnation. Reordering or changing a different cell does not retire it.
+    func editorToken(for cellID: String) -> UUID {
+        guard document.index(ofCellID: cellID) != nil else { return UUID() }
+        if let token = editorTokens[cellID] { return token }
+        let token = UUID(); editorTokens[cellID] = token; return token
+    }
+    func editorIndex(cellID: String, token: UUID) -> Int? {
+        guard editorTokens[cellID] == token else { return nil }
+        return document.index(ofCellID: cellID)
+    }
+    @discardableResult func edit(_ source: String, cellID: String, editorToken: UUID) -> Bool {
+        guard !busy, let index = editorIndex(cellID: cellID, token: editorToken) else { return false }
+        edit(source, at: index); return true
+    }
+    private func reconcileEditors(after previous: [NotebookCell]) {
+        let before = Dictionary(uniqueKeysWithValues: previous.map { ($0.id, $0) })
+        let cells = document.cells, alive = Set(cells.map(\.id))
+        editorTokens = editorTokens.filter { alive.contains($0.key) }
+        for cell in cells {
+            // Replacing source during undo needs a fresh native undo stack. A
+            // deleted/restored id or a kind conversion must reject retired views.
+            if let old = before[cell.id], old.kind == cell.kind, old.source == cell.source,
+               editorTokens[cell.id] != nil { continue }
+            editorTokens[cell.id] = UUID()
+        }
     }
     @discardableResult func save() -> Bool {
         saveTask?.cancel(); saveTask = nil
@@ -96,11 +125,14 @@ private final class KernelLines: @unchecked Sendable {
     }
     private func changeCells(_ change: (inout NotebookDocument) -> Void) {
         guard !busy else { return }; Self.commitInput()
-        guard save(), let before = try? document.serialized() else { return }
+        guard save(), let before = try? document.serialized(),
+              let history = try? document.cellHistorySnapshot() else { return }
+        let previous = document.cells
         change(&document)
         if (try? document.serialized()) != before {
+            reconcileEditors(after: previous)
             structureGeneration = UUID()
-            cellUndo.append(before)
+            cellUndo.append(history)
             while cellUndo.count > 1 && (cellUndo.count > 30 || cellUndo.reduce(0, { $0 + $1.count }) > 16 * 1024 * 1024) { cellUndo.removeFirst() }
             cellUndoAvailable = true; save()
         }
@@ -117,7 +149,9 @@ private final class KernelLines: @unchecked Sendable {
     func clearOutputs(_ index: Int? = nil) { changeCells { $0.clearOutputs(at: index) } }
     func undoCellChange() {
         guard !busy, let bytes = cellUndo.last, let restored = try? NotebookDocument(data: bytes) else { return }
-        Self.commitInput(); structureGeneration = UUID(); document = restored
+        Self.commitInput()
+        let previous = document.cells
+        document = restored; reconcileEditors(after: previous); structureGeneration = UUID()
         cellUndo.removeLast(); cellUndoAvailable = !cellUndo.isEmpty; save()
     }
     func runAndAdvance(_ index: Int) {
@@ -319,8 +353,13 @@ struct AttachmentExport: FileDocument {
         guard generation == session.structureGeneration, let index = session.document.cells.firstIndex(where: { $0.id == cell.id }) else { return }
         action(index)
     }
+    private func withEditor(_ token: UUID, action: (Int) -> Void) {
+        guard let index = session.editorIndex(cellID: cell.id, token: token) else { return }
+        action(index)
+    }
     var body: some View {
         let editGeneration = session.structureGeneration
+        let editorToken = session.editorToken(for: cell.id)
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 Menu("单元格") {
@@ -342,10 +381,10 @@ struct AttachmentExport: FileDocument {
                     Text(session.runningCell == cell.index ? "In [*]" : "In [\(cell.executionCount.map(String.init) ?? " ")]").font(.caption.monospaced())
                     Spacer()
                 }
-                SourceEditor(text: Binding(get: { cell.source }, set: { _ = session.edit($0, cellID: cell.id, generation: editGeneration) }), focus: focus,
+                SourceEditor(text: Binding(get: { cell.source }, set: { _ = session.edit($0, cellID: cell.id, editorToken: editorToken) }), focus: focus,
                              editable: !session.busy, wantsFocus: session.focusedCellID == cell.id, focusRequest: session.focusRequest,
-                             runAndAdvance: { withCell(editGeneration) { session.runAndAdvance($0) } })
-                    .id(editGeneration)
+                             runAndAdvance: { withEditor(editorToken) { session.runAndAdvance($0) } })
+                    .id(editorToken)
                     .font(.system(size: 14, design: .monospaced)).frame(height: min(420, max(84, CGFloat(cell.source.components(separatedBy: "\n").count * 20 + 24))))
                     .disabled(session.busy)
                 if !cell.outputs.isEmpty {
@@ -355,10 +394,10 @@ struct AttachmentExport: FileDocument {
             } else {
                 HStack { Text(cell.kind == "markdown" ? "Markdown" : "文本").font(.caption); Spacer(); Button(editing ? "预览" : "编辑") { editing.toggle() } }
                 if editing {
-                    SourceEditor(text: Binding(get: { cell.source }, set: { _ = session.edit($0, cellID: cell.id, generation: editGeneration) }), focus: focus,
+                    SourceEditor(text: Binding(get: { cell.source }, set: { _ = session.edit($0, cellID: cell.id, editorToken: editorToken) }), focus: focus,
                              editable: !session.busy, wantsFocus: session.focusedCellID == cell.id, focusRequest: session.focusRequest,
-                             runAndAdvance: { withCell(editGeneration) { session.runAndAdvance($0) } })
-                    .id(editGeneration)
+                             runAndAdvance: { withEditor(editorToken) { session.runAndAdvance($0) } })
+                    .id(editorToken)
                         .font(.system(size: 14, design: .monospaced)).frame(minHeight: 100).disabled(session.busy)
                 } else if cell.kind == "markdown" {
                     AttachmentWebView(html: Markdown.document(cell.source), heightChanged: { outputHeight = $0 }).frame(height: outputHeight)

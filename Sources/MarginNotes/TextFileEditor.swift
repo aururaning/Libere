@@ -65,15 +65,24 @@ import MarginCore
     var wantsFocus = false
     var focusRequest: UUID? = nil
     var runAndAdvance: (() -> Void)? = nil
+    var measuredHeight: ((Double) -> Void)? = nil
     @StateObject private var formatting = TextFormatting()
     @ViewState private var identifier = UUID()
-    private var block: Block {
-        var block = Block(.text, frame: Rect(0,0,380,240), text: text); block.id = identifier; block.fontSize = 14; return block
+    private func block(size: CGSize) -> Block {
+        var block = Block(.text, frame: Rect(0,0,max(40, size.width),max(40, size.height)), text: text)
+        block.id = identifier; block.fontSize = 14; return block
     }
     var body: some View {
-        SourceInputSurface(editable: editable, wantsFocus: wantsFocus, request: focusRequest, run: runAndAdvance) {
-            RichTextEditor(block: block, formatting: externalFormatting ?? formatting, focus: focus, checkpoint: {}, editable: editable,
-                           requestFocus: wantsFocus) { _, value in if editable { text = value } }
+        GeometryReader { geometry in
+            SourceInputSurface(editable: editable, wantsFocus: wantsFocus, request: focusRequest, run: runAndAdvance) {
+                RichTextEditor(block: block(size: geometry.size), formatting: externalFormatting ?? formatting, focus: focus,
+                    checkpoint: {}, editable: editable, requestFocus: wantsFocus,
+                    measuredHeight: measuredHeight.map { callback in { measured, height in
+                        guard measured.id == identifier, measured.text == text,
+                              abs(measured.frame.width - max(40, geometry.size.width)) < 1 else { return }
+                        callback(height)
+                    } }) { _, value in if editable { text = value } }
+            }
         }
     }
 }
