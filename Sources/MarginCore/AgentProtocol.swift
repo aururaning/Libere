@@ -1,6 +1,7 @@
 import Foundation
 
 public struct AgentReceipt: Codable, Equatable, Sendable {
+    public var resultPurged: Bool?
     public var requestID: String
     public var fingerprint: String
     public var tool: String

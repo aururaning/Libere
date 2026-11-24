@@ -39,7 +39,7 @@ import MarginCore
                                    size: CGSize(width: paperSize.width * scale, height: paperSize.height * scale),
                                    zoom: zoom, fitting: false, didZoom: zoomChanged,
                                    content: AnyView(document(scale: scale, magnification: zoom)),
-                                   routesMagnification: true)
+                                   routesMagnification: true, didClickDesk: clearTextSelection)
                 } else {
                     #if os(macOS)
                     CanvasViewport(pageID: block.id,
@@ -56,6 +56,9 @@ import MarginCore
             } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
         .background(.white)
+        .background(PageAnnotationKeyboard(enabled: textEnabled && selectedTextID != nil,
+            clear: clearTextSelection, delete: deleteSelectedText).frame(width: 0, height: 0))
+        .onChange(of: selectedTextID) { old, next in if old != next { commitTextInput(id: old) } }
         .onChange(of: textEnabled) { _, enabled in if !enabled { selectedTextID = nil } }
         .onChange(of: destination) { _, _ in selectedTextID = nil }
         .task(id: "\(block.attachmentContentIdentity)-\(page)") { await load() }
@@ -92,9 +95,11 @@ import MarginCore
                 }).frame(width: paperSize.width, height: paperSize.height)
             }
             if textEnabled {
-                Color.clear.contentShape(Rectangle()).onTapGesture(count: 2) { point in
-                    selectedTextID = store.insertPageText(at: point, paper: paperSize, destination: destination, clickCount: 2)
-                }
+                Color.clear.contentShape(Rectangle())
+                    .gesture(SpatialTapGesture(count: 2).onEnded { value in
+                        commitTextInput(id: selectedTextID)
+                        selectedTextID = store.insertPageText(at: value.location, paper: paperSize, destination: destination, clickCount: 2)
+                    }.exclusively(before: SpatialTapGesture().onEnded { _ in clearTextSelection() }))
             }
             ForEach(annotations.texts) { text in
                 PageTextCard(store: store, destination: destination, annotation: text, editing: textEnabled,
@@ -105,6 +110,22 @@ import MarginCore
                 .id("\(noteID)-\(block.id)-\(page)")
                 .frame(width: paperSize.width, height: paperSize.height).allowsHitTesting(inkEnabled)
         }
+    }
+    private func commitTextInput(id: UUID?) {
+        guard let id, store.formatting.blockID == id, let view = store.formatting.view else { return }
+        view.unmarkText(); store.formatting.didChange?()
+        #if os(macOS)
+        view.window?.makeFirstResponder(nil)
+        #else
+        view.resignFirstResponder()
+        #endif
+        store.formatting.clear()
+    }
+    private func clearTextSelection() { commitTextInput(id: selectedTextID); selectedTextID = nil }
+    private func deleteSelectedText() {
+        guard let id = selectedTextID, store.prepareAttachmentNavigation() else { return }
+        store.checkpoint(destination); store.editPage(destination) { $0.texts.removeAll { $0.id == id } }
+        selectedTextID = nil; store.flush()
     }
     private func load() async {
         pdfPage = nil; pdfDocument = nil; image = nil; html = nil; error = nil
@@ -150,10 +171,12 @@ import MarginCore
     @GestureState private var movement = CGSize.zero
     @GestureState private var growth = CGSize.zero
     @ViewState private var source = false
+    @ViewState private var nativeMovement = CGSize.zero
+    @ViewState private var nativeGrowth = CGSize.zero
     private var active: Bool { editing && selection == annotation.id }
-    private var width: CGFloat { min(paper.width, max(growth == .zero ? 1 : 100, annotation.frame.width + growth.width)) }
-    private var height: CGFloat { min(paper.height, max(growth == .zero ? 1 : 40, annotation.frame.height + growth.height)) }
-    private var frame: Rect { Rect(annotation.frame.x + movement.width, annotation.frame.y + movement.height, width, height) }
+    private var width: CGFloat { min(paper.width, max(growth == .zero && nativeGrowth == .zero ? 1 : 100, annotation.frame.width + growth.width + nativeGrowth.width)) }
+    private var height: CGFloat { min(paper.height, max(growth == .zero && nativeGrowth == .zero ? 1 : 40, annotation.frame.height + growth.height + nativeGrowth.height)) }
+    private var frame: Rect { Rect(annotation.frame.x + movement.width + nativeMovement.width, annotation.frame.y + movement.height + nativeMovement.height, width, height) }
     private var textBlock: Block {
         var block = Block(.text, frame: annotation.frame, text: annotation.text)
         block.id = annotation.id; block.fontSize = annotation.fontSize ?? 16; block.fontFamily = annotation.fontFamily
@@ -163,7 +186,12 @@ import MarginCore
         let handle = editing && selection == annotation.id
             ? CanvasItemGeometry.moveHandle(for: frame, paperWidth: paper.width, paperHeight: paper.height, size: BlockMoveHandle.hitSize) : nil
         CanvasItemPlacement(geometry: CanvasItemGeometry(body: frame, handle: handle)) { card } handle: {
-            BlockMoveHandle(active: true).gesture(moveGesture)
+            BlockMoveHandle(active: true)
+                #if os(macOS)
+                .overlay { PageAnnotationPointer(select: { selection = annotation.id }, preview: { nativeMovement = $0 }, commit: { commitFrame(translation: $0) }) }
+                #else
+                .gesture(moveGesture)
+                #endif
         }
     }
     private var card: some View {
@@ -196,23 +224,36 @@ import MarginCore
             .background(Palette.tint("blue").opacity(0.96), in: RoundedRectangle(cornerRadius: 8))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
-                if active {
-                    BlockBorder().fill(.clear, style: FillStyle(eoFill: true)).contentShape(BlockBorder(), eoFill: true)
-                        .gesture(moveGesture)
+                #if os(macOS)
+                if editing {
+                    PageAnnotationPointer(borderOnly: active && source, excludesButtons: active,
+                        select: { selection = annotation.id }, edit: { selection = annotation.id; source = true },
+                        preview: { nativeMovement = $0 }, commit: { commitFrame(translation: $0) })
                 }
+                #else
+                if active { BlockBorder().fill(.clear, style: FillStyle(eoFill: true)).contentShape(BlockBorder(), eoFill: true).gesture(moveGesture) }
+                #endif
             }
             .overlay(alignment: .bottomTrailing) {
                 if active {
                     ResizeCorner(length: min(24, max(16, min(width, height) * 0.1)), hitSize: CanvasItemGeometry.resizeCorner(for: frame, zoom: scale).width)
+                        #if os(macOS)
+                        .overlay { PageAnnotationPointer(select: { selection = annotation.id }, preview: { nativeGrowth = $0 }, commit: { commitFrame(resize: $0) }) }
+                        #else
                         .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named("attachment-\(destination)"))
                             .updating($growth) { value, state, _ in state = value.translation }
                             .onEnded { commitFrame(resize: $0.translation) })
+                        #endif
                 }
             }
+            #if os(iOS)
             .simultaneousGesture(TapGesture().onEnded { if editing { selection = annotation.id } })
             .onTapGesture(count: 2) { if editing { selection = annotation.id; source = true } }
+            #endif
+            .onChange(of: selection) { _, id in if id != annotation.id { source = false; nativeMovement = .zero; nativeGrowth = .zero } }
             .onAppear { if active && annotation.text.isEmpty { source = true } }
             .contextMenu { Button("删除文字批注", role: .destructive) {
+                guard store.prepareAttachmentNavigation() else { return }
                 store.checkpoint(destination); store.editPage(destination) { $0.texts.removeAll { $0.id == annotation.id } }
                 if selection == annotation.id { selection = nil }
             } }

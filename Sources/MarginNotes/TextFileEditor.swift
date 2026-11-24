@@ -35,12 +35,15 @@ import MarginCore
     @ObservedObject var session: TextFileSession
     let filename: String
     var formatting: TextFormatting? = nil
+    var documentZoom: Binding<Double>? = nil
     var focus: () -> Void = {}
     @ViewState private var exporting = false
     @ViewState private var export: AttachmentExport?
     var body: some View {
         VStack(spacing: 0) {
-            SourceEditor(text: Binding(get: { session.document.text }, set: { session.edit($0) }), externalFormatting: formatting, focus: focus).padding(6)
+            ReaderDocumentViewport(zoom: documentZoom) {
+                SourceEditor(text: Binding(get: { session.document.text }, set: { session.edit($0) }), externalFormatting: formatting, focus: focus).padding(6)
+            }
             HStack {
                 Text(session.status).font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -58,13 +61,20 @@ import MarginCore
     @Binding var text: String
     var externalFormatting: TextFormatting? = nil
     var focus: () -> Void = {}
+    var editable = true
+    var wantsFocus = false
+    var focusRequest: UUID? = nil
+    var runAndAdvance: (() -> Void)? = nil
     @StateObject private var formatting = TextFormatting()
     @ViewState private var identifier = UUID()
     private var block: Block {
         var block = Block(.text, frame: Rect(0,0,380,240), text: text); block.id = identifier; block.fontSize = 14; return block
     }
     var body: some View {
-        RichTextEditor(block: block, formatting: externalFormatting ?? formatting, focus: focus, checkpoint: {}) { _, value in text = value }
+        SourceInputSurface(editable: editable, wantsFocus: wantsFocus, request: focusRequest, run: runAndAdvance) {
+            RichTextEditor(block: block, formatting: externalFormatting ?? formatting, focus: focus, checkpoint: {}, editable: editable,
+                           requestFocus: wantsFocus) { _, value in if editable { text = value } }
+        }
     }
 }
 

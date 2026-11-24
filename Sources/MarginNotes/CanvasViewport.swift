@@ -146,9 +146,10 @@ import MarginCore
                         delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas)
                 }
                 if event.type == .leftMouseDown {
+                    if event.modifierFlags.contains(.command), self.pointerInteraction?.openMarkdownLink(at: event.locationInWindow, in: event.window) == true { return true }
                     guard !event.modifierFlags.contains(.control),
                           let area = self.pointerArea(at: event.locationInWindow, in: event.window) else { return false }
-                    return self.beginPointer(at: event.locationInWindow, in: event.window, area: area, clickCount: event.clickCount)
+                    return self.beginPointer(at: event.locationInWindow, in: event.window, area: area, clickCount: event.clickCount, extendingSelection: event.modifierFlags.contains(.shift))
                 }
                 guard self.pointerInteraction?.isPressed == true else { return false }
                 if event.type == .keyDown {
@@ -168,6 +169,13 @@ import MarginCore
            SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point) { return true }
         _ = scrollPaper(delta: delta, precise: precise)
         return true
+    }
+    func reveal(_ rect: CGRect) {
+        let target = contentView.convert(rect, from: paper)
+        var next = contentView.bounds
+        next.origin = CGPoint(x: target.midX - next.width/2, y: target.midY - next.height/2)
+        contentView.scroll(to: contentView.constrainBoundsRect(next).origin)
+        reflectScrolledClipView(contentView)
     }
     @discardableResult func scrollPaper(delta: CGSize, precise: Bool) -> Bool {
         guard delta.width.isFinite, delta.height.isFinite else { return false }
@@ -202,11 +210,11 @@ import MarginCore
         return nil
     }
     @discardableResult func beginPointer(at point: NSPoint, in eventWindow: NSWindow?,
-                                         area: CanvasPointerInteraction.Area, clickCount: Int) -> Bool {
+                                         area: CanvasPointerInteraction.Area, clickCount: Int, extendingSelection: Bool = false) -> Bool {
         guard let window, eventWindow === window, !liveMagnifying,
               SelectionWheel.owns(point, in: eventWindow, scroll: self) else { return false }
         return pointerInteraction?.down(at: paper.convert(point, from: nil), area: area,
-                                        clickCount: clickCount, scale: magnification) == true
+                                        clickCount: clickCount, scale: magnification, extendingSelection: extendingSelection) == true
     }
     @discardableResult func continuePointer(_ type: NSEvent.EventType, at point: NSPoint, in eventWindow: NSWindow?) -> Bool {
         guard let pointerInteraction, pointerInteraction.isPressed else { return false }
@@ -357,6 +365,8 @@ import MarginCore
     var pointerInteraction: CanvasPointerInteraction? = nil
     var attachmentBlockID: UUID? = nil
     var didChangeVisibleRect: ((UUID, CGRect) -> Void)? = nil
+    var revealRect: CGRect? = nil
+    var didReveal: (() -> Void)? = nil
     func makeNSView(context: Context) -> CanvasScrollView { CanvasScrollView(frame: .zero) }
     func updateNSView(_ view: CanvasScrollView, context: Context) {
         view.didZoom = didZoom
@@ -371,6 +381,10 @@ import MarginCore
             view.backgroundColor = .white; view.contentView.backgroundColor = .white
         }
         view.update(pageID: pageID, size: size, zoom: zoom, fitting: fitting, content: content)
+        if let revealRect {
+            view.reveal(revealRect)
+            if let didReveal { DispatchQueue.main.async(execute: didReveal) }
+        }
     }
 }
 #else
@@ -488,12 +502,18 @@ import MarginCore
     var pointerInteraction: CanvasPointerInteraction? = nil
     var attachmentBlockID: UUID? = nil
     var didChangeVisibleRect: ((UUID, CGRect) -> Void)? = nil
+    var revealRect: CGRect? = nil
+    var didReveal: (() -> Void)? = nil
     func makeUIViewController(context: Context) -> CanvasScrollController { CanvasScrollController() }
     func updateUIViewController(_ controller: CanvasScrollController, context: Context) {
         controller.didZoom = didZoom
         controller.didChangeVisibleRect = didChangeVisibleRect
         controller.didClickDesk = didClickDesk
         controller.update(pageID: pageID, size: size, zoom: zoom, fitting: fitting, content: content)
+        if let revealRect {
+            controller.scroll.scrollRectToVisible(controller.paper.convert(revealRect, to: controller.scroll), animated: false)
+            if let didReveal { DispatchQueue.main.async(execute: didReveal) }
+        }
     }
 }
 #endif

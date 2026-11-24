@@ -92,7 +92,7 @@ final class FileWorkflowTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: repo.asset(edited)), Data("编辑版".utf8))
         XCTAssertEqual(try Data(contentsOf: working), Data("外部更新".utf8))
         XCTAssertFalse(dirs.migrate(&workspace))
-        XCTAssertEqual(workspace.schemaVersion, 2)
+        XCTAssertEqual(workspace.schemaVersion, 3)
     }
     func testReferencesStayWithinChosenRootAndFollowPageNames() {
         let root = URL(fileURLWithPath: "/tmp/my-library")

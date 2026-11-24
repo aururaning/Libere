@@ -152,6 +152,22 @@ private final class CloudFileFixture: @unchecked Sendable {
     else { preconditionFailure("Missing local file offered a cloud download") }
     let real = try ICloudFileSnapshot.read(localURL)
     check(real.local && !real.ubiquitous && !real.canEvict, "Real non-iCloud files are readable and never eligible for eviction")
+    let manualBackend = CloudFileFixture()
+    let manualRoot = root.appendingPathComponent("manual")
+    let manual = ICloudFiles(root: manualRoot, preferences: preferences,
+        inspect: { try manualBackend.read($0) }, download: { try manualBackend.download($0) }, evict: { try manualBackend.evict($0) })
+    let manualURLs = ["ready.md", "visible.md", "kernel.md", "upload.md"].map { manualRoot.appendingPathComponent($0) }
+    for url in manualURLs { manualBackend.values[url.lastPathComponent] = safe }
+    manualBackend.values["upload.md"]?.uploaded = false
+    manual.retain(manualURLs[1], token: UUID())
+    await manual.releasePage(manualURLs, isProtected: { $0 == "kernel.md" })
+    check(manualBackend.released == ["ready.md"], "Explicit page release ignores age but preserves visible, kernel and unuploaded files")
+    var remoteFixture = safe; remoteFixture.local = false; remoteFixture.current = false
+    manualBackend.values["one.md"] = remoteFixture; manualBackend.values["two.md"] = remoteFixture
+    let downloads = ["one.md", "two.md"].map { manualRoot.appendingPathComponent($0) }
+    manual.downloadPage(downloads)
+    for _ in 0..<400 { if manualBackend.downloaded.count == 2 { break }; try await Task.sleep(nanoseconds: 5_000_000) }
+    check(Set(manualBackend.downloaded) == ["one.md", "two.md"], "Current-page predownload queues all cloud originals without copying files")
     print("PASS: \(count) iCloud availability, explicit download and safe local-release assertions")
     return count
 }

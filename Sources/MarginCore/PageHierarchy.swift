@@ -53,7 +53,11 @@ public extension Workspace {
     }
     @discardableResult mutating func trashSubtree(_ id: UUID) -> Set<UUID> {
         let ids = liveSubtree(id), batch = UUID()
-        for i in notes.indices where ids.contains(notes[i].id) { notes[i].deleted = true; notes[i].trashBatchID = batch }
+        let originals = self, date = Date()
+        for i in notes.indices where ids.contains(notes[i].id) {
+            notes[i].originalParentPath = notes[i].parentID.map { ReferencePath.title(of: $0, in: originals).joined(separator: " / ") } ?? "知识库根目录"
+            notes[i].deletedAt = date; notes[i].deleted = true; notes[i].trashBatchID = batch
+        }
         return ids
     }
     @discardableResult mutating func recoverSubtree(_ id: UUID) -> Set<UUID> {
@@ -61,11 +65,41 @@ public extension Workspace {
         let descendants = descendants(id)
         let ids = Set(notes.filter { $0.id == id || (root.trashBatchID != nil && $0.deleted && $0.trashBatchID == root.trashBatchID && descendants.contains($0.id)) }.map(\.id))
         for i in notes.indices where ids.contains(notes[i].id) {
-            notes[i].deleted = false; notes[i].trashBatchID = nil
+            notes[i].deleted = false; notes[i].trashBatchID = nil; notes[i].deletedAt = nil; notes[i].originalParentPath = nil
             if let parent = notes[i].parentID, !ids.contains(parent), !notes.contains(where: { $0.id == parent && !$0.deleted }) {
                 notes[i].parentID = nil
             }
         }
         return ids
+    }
+    var purgedPageIDs: Set<UUID> { Set((purgedPages ?? [:]).values.map(\.id)) }
+    @discardableResult mutating func enforcePurges() -> Set<UUID> {
+        for note in notes where note.permanentlyDeleted == true {
+            mergePurge(PurgedPage(note: note, date: note.deletedAt ?? note.modifiedAt), enforce: false)
+        }
+        let ids = purgedPageIDs
+        guard !ids.isEmpty else { return [] }
+        notes.removeAll { ids.contains($0.id) }
+        for i in notes.indices where notes[i].parentID.map(ids.contains) == true { notes[i].parentID = nil }
+        if !ids.isEmpty, agentReceipts != nil {
+            let tokens = ids.map { $0.uuidString.lowercased() }
+            for i in agentReceipts!.indices {
+                let text = String(data: agentReceipts![i].result, encoding: .utf8)?.lowercased() ?? ""
+                if tokens.contains(where: text.contains) {
+                    agentReceipts![i].result = Data(); agentReceipts![i].resultPurged = true
+                }
+            }
+        }
+        return ids
+    }
+    mutating func mergePurge(_ tombstone: PurgedPage, enforce: Bool = true) {
+        var tombstone = tombstone
+        if let existing = purgedPages?[tombstone.id.uuidString] {
+            tombstone.version = tombstone.version.joined(existing.version)
+            if existing.date > tombstone.date { tombstone.date = existing.date; tombstone.revision = existing.revision }
+        }
+        if purgedPages == nil { purgedPages = [:] }
+        purgedPages?[tombstone.id.uuidString] = tombstone
+        if enforce { enforcePurges() }
     }
 }

@@ -32,8 +32,10 @@ enum EditorTool: String, CaseIterable {
     }
     @Published var folderBlockSelection: UUID?
     @Published var editingBlockID: UUID?
+    @Published var interactingBlockID: UUID?
     @Published var draggingBlockID: UUID?
     lazy var canvasPointer = CanvasPointerInteraction(store: self)
+    lazy var multiSelection = CanvasMultiSelection(store: self)
     var endingBlockEditing = false
     @Published var blockKeyboardFocus = false
     @Published var keyboardFocusRequest = UUID()
@@ -53,17 +55,23 @@ enum EditorTool: String, CaseIterable {
     @Published var pageDropPlacement: PagePlacement?
     struct DeletionRequest: Identifiable { let id: UUID }
     @Published var deletionRequest: DeletionRequest?
+    struct PurgeRequest: Identifiable { let id = UUID(); let pageIDs: Set<UUID> }
+    @Published var purgeRequest: PurgeRequest?
+    @Published var movingPageID: UUID?
     @Published var confirmSubtreeDeletion = true {
         didSet { preferences.set(confirmSubtreeDeletion, forKey:"LibereConfirmSubtreeDeletion") }
     }
     @Published var snap = true
     @Published var grid = true
     @Published var search = ""
+    @Published var showingQuickSearch = false
+    @Published var revealBlockID: UUID?
     @Published var message: String?
     @Published var saveStatus = "已保存到本机"
     @Published var cloudStatus = "本地资料库"
     @Published var formulaEditor: Block?
     @Published var readerBlock: Block?
+    @Published var readerInitialPage: Int?
     @Published var fetchingLinks: Set<UUID> = []
     @Published var linkSnapshots: [UUID: Data] = [:]
     @Published var showTrash = false
@@ -82,6 +90,7 @@ enum EditorTool: String, CaseIterable {
     var cloud: CloudSync?
     private var saveTask: Task<Void, Never>?
     private let preferences: UserDefaults
+    private var fontUndoGroup: (noteID: UUID, blockID: UUID, revision: UUID, range: NSRange?, date: Date)?
     fileprivate struct HistoryEntry: Codable, Sendable {
         var notes: [Note]
         var selection: UUID?
@@ -156,9 +165,11 @@ enum EditorTool: String, CaseIterable {
             if loaded.needsMigration { try repository.save(existing) }
         }
         else { workspace = Self.welcome(device); try repository.save(workspace) }
+        workspace.enforcePurges()
         if let history = loaded.history {
             undoStack = Array(history.undo.suffix(50)); redoStack = Array(history.redo.suffix(50))
         }
+        discardPurgedHistory()
         selection = workspace.notes.first { !$0.isFolder && !$0.deleted }?.id
         if let selection { expandAncestors(of: selection) }
         referenceStamps = loaded.referenceStamps
@@ -168,6 +179,7 @@ enum EditorTool: String, CaseIterable {
     var block: Block? { note?.blocks.first { $0.id == blockSelection } }
     var canUndo: Bool { !undoStack.isEmpty }; var canRedo: Bool { !redoStack.isEmpty }
     func select(_ id: UUID) {
+        interactingBlockID = nil
         if let folderID = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: folderID) { return }
         finishBlockEditing()
         if renaming != nil && renaming != id { commitRename() }
@@ -188,11 +200,14 @@ enum EditorTool: String, CaseIterable {
         search = ""; selection = id; expandAncestors(of: id); renameDraft = note.title; renaming = id
     }
     func commitRename() {
-        guard saveEditors() else { return }
-        guard let id = renaming, let index = workspace.notes.firstIndex(where: { $0.id == id }) else { return }
-        let value = renameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        renaming = nil
-        guard !value.isEmpty, value != workspace.notes[index].title else { return }
+        guard let id = renaming else { return }
+        if renamePage(id, to: renameDraft) { renaming = nil }
+    }
+    @discardableResult func renamePage(_ id: UUID, to draft: String) -> Bool {
+        guard saveEditors(), let index = workspace.notes.firstIndex(where: { $0.id == id && !$0.deleted }) else { return false }
+        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { message = "页面名称不能为空。"; return false }
+        guard value != workspace.notes[index].title else { return true }
         var next = workspace; next.notes[index].title = value
         var changed: Set<UUID> = [id]
         for (order,sibling) in workspace.children(workspace.notes[index].parentID).enumerated() {
@@ -200,9 +215,17 @@ enum EditorTool: String, CaseIterable {
                 next.notes[i].sidebarOrder = order; changed.insert(sibling.id)
             }
         }
-        commitHierarchy(next,changed:changed,focus:id)
+        return commitHierarchy(next, changed: changed, focus: selection)
     }
     func cancelRename() { renaming = nil; renameDraft = "" }
+    func setTags(noteID: UUID, tags: [String]) {
+        guard let i = workspace.notes.firstIndex(where: { $0.id == noteID && !$0.deleted }) else { return }
+        var seen: Set<String> = []
+        let cleaned = tags.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty && seen.insert($0).inserted }
+        guard (workspace.notes[i].tags ?? []) != cleaned else { return }
+        checkpoint(InkDestination(noteID: noteID)); workspace.notes[i].tags = cleaned
+        workspace.notes[i].touch(device); dirty(noteID)
+    }
     @discardableResult func beginFolderOverviewEditing(noteID: UUID) -> Bool {
         folderBlockSelection = noteID
         guard workspace.notes.contains(where: { $0.id == noteID && $0.isFolder && !$0.deleted }) else { return false }
@@ -234,8 +257,9 @@ enum EditorTool: String, CaseIterable {
         folderOverviewEditingID = nil; folderOverviewCheckpointed = false
         return true
     }
-    func checkpoint() { guard let note else { return }; undoStack.append(HistoryEntry([note],selection:selection)); if undoStack.count > 50 { undoStack.removeFirst() }; redoStack = []; saveHistory() }
+    func checkpoint() { fontUndoGroup = nil; guard let note else { return }; undoStack.append(HistoryEntry([note],selection:selection)); if undoStack.count > 50 { undoStack.removeFirst() }; redoStack = []; saveHistory() }
     func checkpoint(_ destination: InkDestination) {
+        fontUndoGroup = nil
         guard let note = workspace.notes.first(where: { $0.id == destination.noteID }) else { return }
         undoStack.append(HistoryEntry([note],selection:selection)); if undoStack.count > 50 { undoStack.removeFirst() }; redoStack = []; saveHistory()
     }
@@ -315,6 +339,7 @@ enum EditorTool: String, CaseIterable {
         return flush()
     }
     func undo() {
+        fontUndoGroup = nil; discardPurgedHistory()
         if let id = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: id) { return }
         finishBlockEditing()
         guard saveEditors(), let previous = undoStack.last else { return }
@@ -330,6 +355,7 @@ enum EditorTool: String, CaseIterable {
         } catch { message = error.localizedDescription }
     }
     func redo() {
+        fontUndoGroup = nil; discardPurgedHistory()
         if let id = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: id) { return }
         finishBlockEditing()
         guard saveEditors(), let entry = redoStack.last else { return }
@@ -404,6 +430,68 @@ enum EditorTool: String, CaseIterable {
         }
         formatting.apply(action)
     }
+    /// One font-panel event changes family and absolute size together. A continuous
+    /// gesture coalesces only while this exact note revision remains our last edit.
+    func applyFontPanel(family: String, size: Double, now: Date = Date()) {
+        guard size.isFinite, let page = note, let block, block.kind == .text else { return }
+        if formatting.view != nil, formatting.blockID != block.id { return }
+        let size = min(96, max(10, size))
+        let chosen = NativeFont(name: family, size: size) ?? NativeFont.systemFont(ofSize: size)
+        let existingFont = NativeFont(name: block.fontFamily ?? "", size: block.fontSize) ?? NativeFont.systemFont(ofSize: block.fontSize)
+        var changed = existingFont.fontName != chosen.fontName || abs(existingFont.pointSize - chosen.pointSize) > 0.001
+        #if os(macOS)
+        if !block.usesMarkdown {
+            let source = formatting.view?.textStorage.map { NSAttributedString(attributedString: $0) }
+                ?? block.rtf.flatMap { try? NSAttributedString(data: $0, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) }
+            if let source, source.length > 0 {
+                let selected = formatting.view?.selectedRange() ?? NSRange(location: 0, length: 0)
+                let range = selected.length > 0 && NSMaxRange(selected) <= source.length ? selected : NSRange(location: 0, length: source.length)
+                changed = false
+                source.enumerateAttribute(.font, in: range) { value, _, stop in
+                    let current = value as? NSFont ?? existingFont
+                    if FontPanel.persistedFontName(current) != FontPanel.persistedFontName(chosen) || abs(current.pointSize - chosen.pointSize) > 0.001 { changed = true; stop.pointee = true }
+                }
+            } else if let current = formatting.view?.typingAttributes[.font] as? NSFont {
+                changed = current.fontName != chosen.fontName || abs(current.pointSize - chosen.pointSize) > 0.001
+            }
+        }
+        #endif
+        guard changed else { return }
+        #if os(macOS)
+        let range = block.usesMarkdown ? nil : formatting.view?.selectedRange()
+        #else
+        let range = block.usesMarkdown ? nil : formatting.view?.selectedRange
+        #endif
+        let coalesces = fontUndoGroup.map { $0.noteID == page.id && $0.blockID == block.id && $0.revision == page.revision && $0.range == range && (0..<0.6).contains(now.timeIntervalSince($0.date)) } ?? false
+        if !coalesces { checkpoint() }
+        if block.usesMarkdown {
+            editBlock(block.id) { $0.fontFamily = family; $0.fontSize = size }
+        } else {
+            let before = formatting.beforeChange; formatting.beforeChange = nil
+            formatting.apply(.fontStyle(family, size)); formatting.beforeChange = before
+            #if os(macOS)
+            var data: Data?
+            if formatting.view == nil {
+                let source = block.rtf.flatMap { try? NSAttributedString(data: $0, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) }
+                    ?? NSAttributedString(string: block.text)
+                let text = NSMutableAttributedString(attributedString: source)
+                text.addAttribute(.font, value: NSFont(name: family, size: size) ?? NSFont.systemFont(ofSize: size), range: NSRange(location: 0, length: text.length))
+                data = try? text.data(from: NSRange(location: 0, length: text.length), documentAttributes: [.documentType: NSAttributedString.DocumentType.rtf])
+            }
+            editBlock(block.id) { $0.fontFamily = family; $0.fontSize = size; if let data { $0.rtf = data } }
+            #else
+            editBlock(block.id) { $0.fontFamily = family; $0.fontSize = size }
+            #endif
+        }
+        if let revision = note?.revision { fontUndoGroup = (page.id, block.id, revision, range, now) }
+    }
+    /// A font's asynchronous height measurement belongs to the same undo gesture,
+    /// but only if no independent edit changed the note in between.
+    func continueFontPanelLayout(blockID: UUID, previousRevision: UUID) {
+        guard var group = fontUndoGroup, group.noteID == selection, group.blockID == blockID,
+              group.revision == previousRevision, let revision = note?.revision else { return }
+        group.revision = revision; fontUndoGroup = group
+    }
     private func dirty(_ id: UUID) {
         workspace.pending.insert("page_" + id.uuidString); saveStatus = "正在保存…"
         saveTask?.cancel()
@@ -475,6 +563,71 @@ enum EditorTool: String, CaseIterable {
         var next = workspace; let ids = next.recoverSubtree(id)
         if commitHierarchy(next,changed:ids,focus:id) { select(id) }
     }
+    func requestPurge(_ id: UUID? = nil) {
+        let ids = id.map { workspace.descendants($0) } ?? Set(workspace.notes.filter(\.deleted).map(\.id))
+        let deleted = Set(workspace.notes.filter { $0.deleted && ids.contains($0.id) }.map(\.id))
+        if !deleted.isEmpty { purgeRequest = PurgeRequest(pageIDs: deleted) }
+    }
+    @discardableResult func confirmPurge() -> Bool {
+        guard let request = purgeRequest else { return false }
+        guard purgeTrashed(request.pageIDs) else { return false }
+        purgeRequest = nil; return true
+    }
+    /// Only page/annotation metadata is removed. Indexed original files are never
+    /// moved or deleted by this operation, including files owned by purged pages.
+    @discardableResult func purgeTrashed(_ requested: Set<UUID>) -> Bool {
+        guard saveEditors() else { return false }
+        let removed = workspace.notes.filter { $0.deleted && requested.contains($0.id) }
+        guard !removed.isEmpty else { return false }
+        var next = workspace
+        for var page in removed {
+            page.touch(device)
+            next.mergePurge(PurgedPage(note: page), enforce: false)
+            next.pending.insert("page_" + page.id.uuidString)
+        }
+        next.enforcePurges()
+        do {
+            try repository.save(next); saveTask?.cancel(); workspace = next
+            fontUndoGroup = nil; discardPurgedHistory(); saveHistory()
+            do { try purgeHistoricalRecords() }
+            catch { message = "页面已清除，但部分旧撤销记录清理失败：" + error.localizedDescription }
+            if selection.map(workspace.purgedPageIDs.contains) == true { selection = nil; blockSelection = nil }
+            expandedPages.subtract(workspace.purgedPageIDs)
+            if renaming.map(workspace.purgedPageIDs.contains) == true { cancelRename() }
+            saveStatus = "已保存到本机"; cloud?.enqueue(); return true
+        } catch { message = error.localizedDescription; return false }
+    }
+    func discardPurgedHistory(persist: Bool = false) {
+        let purged = workspace.purgedPageIDs
+        func filtered(_ entries: [HistoryEntry]) -> [HistoryEntry] {
+            entries.compactMap { entry in
+                var notes = entry.notes.filter { !purged.contains($0.id) }
+                guard !notes.isEmpty else { return nil }
+                for i in notes.indices where notes[i].parentID.map(purged.contains) == true { notes[i].parentID = nil }
+                return HistoryEntry(notes, selection: entry.selection.flatMap { purged.contains($0) ? nil : $0 })
+            }
+        }
+        undoStack = filtered(undoStack); redoStack = filtered(redoStack)
+        if persist { saveHistory() }
+    }
+    private func purgeHistoricalRecords() throws {
+        let purged = workspace.purgedPageIDs
+        for url in try FileManager.default.contentsOfDirectory(at: repository.root, includingPropertiesForKeys: [.isRegularFileKey])
+            where url.lastPathComponent.hasPrefix("History-") && url.pathExtension == "json" {
+            guard try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
+            var history = try JSONDecoder().decode(History.self, from: Data(contentsOf: url))
+            func clean(_ entries: [HistoryEntry]) -> [HistoryEntry] {
+                entries.compactMap { entry in
+                    var notes = entry.notes.filter { !purged.contains($0.id) }
+                    guard !notes.isEmpty else { return nil }
+                    for i in notes.indices where notes[i].parentID.map(purged.contains) == true { notes[i].parentID = nil }
+                    return HistoryEntry(notes, selection: entry.selection.flatMap { purged.contains($0) ? nil : $0 })
+                }
+            }
+            history.undo = clean(history.undo); history.redo = clean(history.redo)
+            try Repository.writeAtomically(JSONEncoder().encode(history), to: url)
+        }
+    }
     @discardableResult private func commitHierarchy(_ candidate: Workspace, changed: Set<UUID>, focus: UUID?) -> Bool {
         guard !changed.isEmpty else { return false }
         let before = workspace, previousSelection = selection
@@ -535,6 +688,8 @@ enum EditorTool: String, CaseIterable {
         if collapsed, let id = blockSelection, block?.collapsed != true { toggleCollapsed(id) }
     }
     func deleteBlock(_ id: UUID) {
+        guard let target = note?.blocks.first(where: { $0.id == id }) else { return }
+        guard !target.locked else { message = "这个内容块已锁定，请先解锁再删除。"; return }
         finishBlockEditing()
         checkpoint(); edit { note in
             let anchors = Set(note.anchors.filter { $0.ownerID == id }.map(\.id))
@@ -542,7 +697,11 @@ enum EditorTool: String, CaseIterable {
             for i in note.blocks.indices where anchors.contains(note.blocks[i].anchorID ?? UUID()) { note.blocks[i].anchorID = nil }
         }; blockSelection = nil; blockKeyboardFocus = false; formatting.clear(); flush()
     }
-    func deleteSelectedBlock() { if blockKeyboardFocus, editingBlockID == nil, let id = blockSelection { deleteBlock(id) } }
+    func deleteSelectedBlock() {
+        guard blockKeyboardFocus, editingBlockID == nil else { return }
+        if multiSelection.selectedIDs.count > 1 { multiSelection.delete() }
+        else if let id = blockSelection { deleteBlock(id) }
+    }
     func undoFocused() {
         #if os(macOS)
         if let text = NSApp.keyWindow?.firstResponder as? NSTextView { text.undoManager?.undo(); return }
@@ -666,6 +825,24 @@ enum EditorTool: String, CaseIterable {
         })
     }
     func enableCloud() { if cloud == nil { cloud = CloudSync(store: self) }; cloud?.start() }
+    var currentPageFileURLs: [URL] {
+        var seen: Set<String> = []
+        return (note?.blocks ?? []).compactMap { block in
+            guard let url = attachmentURL(for: block), seen.insert(url.standardizedFileURL.path).inserted else { return nil }
+            return url
+        }
+    }
+    func isICloudFileProtected(_ path: String, includingCurrentPage: Bool = true) -> Bool {
+        if note?.blocks.contains(where: { $0.relativeFilePath == path && (includingCurrentPage || $0.id == editingBlockID) }) == true { return true }
+        let identities = Set(workspace.notes.flatMap(\.blocks).filter { $0.relativeFilePath == path }.map { $0.fileIdentity.uuidString })
+        if identities.contains(where: { textSessions[$0]?.hasUnsavedChanges == true || notebookSessions[$0]?.hasUnsavedChanges == true }) { return true }
+        return notebookSessions.values.contains { session in
+            guard session.ready || session.busy else { return false }
+            if session.workingDirectory.standardizedFileURL == repository.root.standardizedFileURL { return true }
+            guard let directory = ReferencePath.relative(session.workingDirectory, inside: repository.root) else { return false }
+            return path.hasPrefix(directory + "/")
+        }
+    }
 
     func notebookSession(noteID: UUID, blockID: UUID) throws -> NotebookSession {
         guard let note = workspace.notes.first(where: { $0.id == noteID }), let block = note.blocks.first(where: { $0.id == blockID }),
@@ -840,6 +1017,30 @@ enum EditorTool: String, CaseIterable {
         do { try directories.synchronize(workspace) }
         catch { message = "场景已保存，文件目录整理稍后重试：" + error.localizedDescription }
         select(catalog.rootID); expandedPages.insert(catalog.rootID); cloud?.enqueue()
+    }
+    /// Atomically add indexed pages; a single undo trashes only these new pages.
+    func commitIndexedPages(_ pages: [Note]) throws {
+        guard !pages.isEmpty else { return }
+        finishBlockEditing()
+        guard saveEditors() else { throw CocoaError(.fileWriteUnknown) }
+        let incoming = Set(pages.map(\.id)), existing = Set(workspace.notes.map(\.id)).union(workspace.purgedPageIDs)
+        guard incoming.count == pages.count, incoming.isDisjoint(with: existing) else { throw StoreError.corrupt }
+        let validParents = incoming.union(workspace.notes.filter { !$0.deleted }.map(\.id))
+        guard pages.allSatisfy({ $0.parentID == nil || validParents.contains($0.parentID!) }) else { throw StoreError.corrupt }
+        var next = workspace, placeholders: [Note] = []
+        let priorSelection = selection, batch = UUID()
+        for var page in pages {
+            for block in page.blocks {
+                if let path = block.relativeFilePath, ReferencePath.resolve(path, inside: repository.root) == nil { throw FileIndexError.outsideLibrary }
+            }
+            var placeholder = page; placeholder.deleted = true; placeholder.deletedAt = Date(); placeholder.trashBatchID = batch
+            placeholders.append(placeholder); page.touch(device); next.notes.append(page)
+            next.pending.insert("page_" + page.id.uuidString)
+        }
+        try repository.save(next); saveTask?.cancel(); workspace = next
+        undoStack.append(HistoryEntry(placeholders, selection: priorSelection)); undoStack = Array(undoStack.suffix(50))
+        redoStack = []; saveHistory(); saveStatus = "已保存到本机"; cloud?.enqueue()
+        if let first = pages.first { select(first.id) }
     }
 
     private static func welcome(_ device: String) -> Workspace {

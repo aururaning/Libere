@@ -90,21 +90,21 @@ extension AppStore {
         VStack(spacing: 0) {
             HStack(spacing: 8) {
                 Menu(mode.title) { ForEach(LinkDisplayMode.allCases, id: \.self) { item in
-                    Button(item.title) { store.setLinkMode(item, noteID: noteID, blockID: block.id) }
+                    Button(item.title) { store.selectInlineInteraction(block.id); store.setLinkMode(item, noteID: noteID, blockID: block.id) }
                 } }.font(.caption)
                 Spacer(minLength: 0)
                 if mode == .browser {
-                    Button { browser.view?.goBack() } label: { Image(systemName: "chevron.left") }.help("后退")
-                    Button { browser.view?.goForward() } label: { Image(systemName: "chevron.right") }.help("前进")
-                    Button { browser.error = nil; browser.view?.reload() } label: { Image(systemName: "arrow.clockwise") }.help("刷新")
+                    Button { store.selectInlineInteraction(block.id); browser.view?.goBack() } label: { Image(systemName: "chevron.left") }.help("后退")
+                    Button { store.selectInlineInteraction(block.id); browser.view?.goForward() } label: { Image(systemName: "chevron.right") }.help("前进")
+                    Button { store.selectInlineInteraction(block.id); browser.error = nil; browser.view?.reload() } label: { Image(systemName: "arrow.clockwise") }.help("刷新")
                 }
-                if mode == .html, data != nil { Button { exporting = true } label: { Image(systemName: "square.and.arrow.up") }.help("导出 HTML") }
+                if mode == .html, data != nil { Button { store.selectInlineInteraction(block.id); exporting = true } label: { Image(systemName: "square.and.arrow.up") }.help("导出 HTML") }
             }.buttonStyle(.plain).padding(.horizontal, 10).frame(height: 30)
             if mode == .card {
                 VStack(alignment: .leading, spacing: 10) {
                     Label(WebLink.url(block.linkURL ?? "")?.host ?? "网页链接", systemImage: "link").font(.headline)
                     Text(block.linkURL ?? "").font(.caption).foregroundStyle(.secondary).lineLimit(3).textSelection(.enabled)
-                    Button("在页面中浏览") { store.setLinkMode(.browser, noteID: noteID, blockID: block.id) }
+                    Button("在页面中浏览") { store.selectInlineInteraction(block.id); store.setLinkMode(.browser, noteID: noteID, blockID: block.id) }
                 }.padding(16).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else if mode == .html && store.fetchingLinks.contains(block.id) { ProgressView("正在获取 HTML…").frame(maxHeight: .infinity) }
             else if let url = WebLink.url(block.linkURL ?? ""), mode == .browser || data != nil {
@@ -116,9 +116,10 @@ extension AppStore {
                         if let error = browser.error { Text(error).font(.caption).padding(8).background(.regularMaterial) }
                     }
             } else {
-                Button("获取 HTML 页面") { Task { await store.fetchHTML(noteID: noteID, blockID: block.id) } }.frame(maxHeight: .infinity)
+                Button("获取 HTML 页面") { store.selectInlineInteraction(block.id); Task { await store.fetchHTML(noteID: noteID, blockID: block.id) } }.frame(maxHeight: .infinity)
             }
         }
+        .background(InlineInteractionSelection(store: store, blockID: block.id))
         .task(id: block.contentRevision) {
             data = store.linkSnapshots[block.fileIdentity]
             if data == nil, let url = store.attachmentURL(for: block) { data = try? Data(contentsOf: url) }

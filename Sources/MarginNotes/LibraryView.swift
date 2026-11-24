@@ -76,6 +76,16 @@ struct NoteTree: Identifiable {
                     description: { Text("新建笔记，或从左侧选择已有页面。") }
                     actions: { Button("新建笔记") { store.create() }.buttonStyle(.borderedProminent) }
                 }
+                if let note = store.note, !store.showTrash {
+                    DisclosureGroup("标签与引用") {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 8) {
+                                PageTagsEditor(store: store, noteID: note.id)
+                                BacklinksView(store: store, noteID: note.id)
+                            }
+                        }.frame(maxHeight: 240)
+                    }.font(.caption).padding(.horizontal, 16).padding(.vertical, 6)
+                }
                 statusbar
             }
         }
@@ -93,6 +103,11 @@ struct NoteTree: Identifiable {
             if case .failure(let error) = result { store.message = error.localizedDescription }
         }
         .sheet(item:$store.deletionRequest) { request in DeletePageSheet(store:store,id:request.id) }
+        .sheet(item: $store.purgeRequest) { request in PurgePagesSheet(store: store, request: request) }
+        .sheet(isPresented: $store.showingQuickSearch) { QuickSearchView(store: store) }
+        .sheet(isPresented: Binding(get: { store.movingPageID != nil }, set: { if !$0 { store.movingPageID = nil } })) {
+            if let id = store.movingPageID { MovePageSheet(store: store, pageID: id) }
+        }
         .sheet(item: $store.formulaEditor) { block in FormulaEditor(store: store, block: block) }
         .sheet(isPresented: $showingReferences) { FileReferencePicker(store: store, asPage: referenceAsPage) }
         .alert("提示", isPresented: Binding(get: { store.message != nil }, set: { if !$0 { store.message = nil } })) {
@@ -122,7 +137,7 @@ struct NoteTree: Identifiable {
         }
         #else
         .fullScreenCover(item: $store.readerBlock) { block in
-            if let id = store.selection { AttachmentReader(store: store, noteID: id, block: block) }
+            if let id = store.selection { AttachmentReader(store: store, noteID: id, block: block, initialPage: store.readerInitialPage) }
         }
         #endif
     }
@@ -176,6 +191,12 @@ struct NoteTree: Identifiable {
                     Divider()
                     Button("启用 iCloud") { store.enableCloud() }
                     Button("存储位置…", action: openStorage)
+                    Divider()
+                    Button("下载本页的 iCloud 文件") { store.iCloudFiles.downloadPage(store.currentPageFileURLs) }
+                        .disabled(store.currentPageFileURLs.isEmpty)
+                    Button("释放本页未使用的本地下载") {
+                        Task { await store.iCloudFiles.releasePage(store.currentPageFileURLs, isProtected: { store.isICloudFileProtected($0, includingCurrentPage: false) }) }
+                    }.disabled(store.currentPageFileURLs.isEmpty)
                 } label: { Image(systemName: "ellipsis.circle") }
             }.padding(16)
         }
@@ -195,29 +216,33 @@ struct NoteTree: Identifiable {
             if store.renaming == note.id { SidebarNameField(text: $store.renameDraft, commit: { store.commitRename() }, cancel: { store.cancelRename() }).frame(height: 23) }
             else { Text(note.title.isEmpty ? "未命名" : note.title) }
         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded {
+                if store.showTrash && store.renaming != note.id { store.select(note.id) }
+            })
             .lineLimit(1).contextMenu {
-                Button("重命名（Enter）") { store.beginRename(note.id) }
-                Button("新建子页面") { store.create(parent: note.id) }
-                Button("新建子文件夹") { store.create(folder: true, parent: note.id) }
-                Button("引用文件为子页面") { store.select(note.id); referenceAsPage = true; showingReferences = true }
-                Menu("移动到") {
-                    Button("知识库根目录") { store.move(note.id, to: nil) }
-                    ForEach(store.workspace.moveTargets(for: note.id)) { target in
-                        Button(target.title) { store.move(note.id, to: target.id) }
-                    }
-                }
-                Button("移入回收站（⌘⌫）", role: .destructive) { store.requestTrash(note.id) }
-                #if os(macOS)
-                Button("打开原文件夹") { if store.flush() { NSWorkspace.shared.open(store.directories.directory(for: note.id, in: store.workspace)) } }
-                #endif
+                pageActions(note)
             }
+            .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
+                store.indexDroppedFiles(providers: providers, at: nil, noteID: note.id)
+            }
+    }
+    @ViewBuilder private func pageActions(_ note: Note) -> some View {
+        Button("重命名（Enter）") { store.beginRename(note.id) }
+        Button("新建子页面") { store.create(parent: note.id) }
+        Button("新建子文件夹") { store.create(folder: true, parent: note.id) }
+        Button("引用文件为子页面") { store.select(note.id); referenceAsPage = true; showingReferences = true }
+        Button("移动到…") { store.movingPageID = note.id }
+        Button("移入回收站（⌘⌫）", role: .destructive) { store.requestTrash(note.id) }
+        #if os(macOS)
+        Button("打开原文件夹") { if store.flush() { NSWorkspace.shared.open(store.directories.directory(for: note.id, in: store.workspace)) } }
+        #endif
     }
     private func titlebar(_ note: Note) -> some View {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(breadcrumb(note)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                TextField("未命名笔记", text: Binding(get: { store.note?.title ?? "" }, set: { title in store.edit { $0.title = title } }))
-                    .textFieldStyle(.plain).font(.system(size: 23, weight: .semibold)).onSubmit { store.flush() }
+                PageTitleField(noteID: note.id, title: note.title, commit: { store.renamePage($0, to: $1) })
+                    .id(note.id).frame(height: 31)
             }
             Spacer()
             if !note.isFolder {
@@ -286,6 +311,16 @@ struct NoteTree: Identifiable {
         return ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 FolderOverview(store: store, noteID: note.id).id(note.id)
+                if children.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("文件夹还是空的").font(.headline)
+                        HStack {
+                            Button("新建子笔记", systemImage: "doc.badge.plus") { store.create(parent: note.id) }
+                            Button("新建子文件夹", systemImage: "folder.badge.plus") { store.create(folder: true, parent: note.id) }
+                            Button("引用文件", systemImage: "link") { store.select(note.id); referenceAsPage = true; showingReferences = true }
+                        }.buttonStyle(.bordered)
+                    }.padding(20).frame(maxWidth: .infinity, alignment: .leading).background(.background, in: RoundedRectangle(cornerRadius: 14))
+                }
                 Text("\(children.count) 个子项目").font(.subheadline).foregroundStyle(.secondary)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 18)], spacing: 18) {
                     ForEach(children) { child in
@@ -298,17 +333,45 @@ struct NoteTree: Identifiable {
                                 Spacer(minLength: 0)
                                 Text("\(child.blocks.count) 个内容块 · \(childCounts[child.id] ?? 0) 个子项目").font(.caption2).foregroundStyle(.secondary)
                             }.frame(maxWidth: .infinity, alignment: .leading).frame(height: 160).padding(20).background(.background, in: RoundedRectangle(cornerRadius: 14))
-                        }.buttonStyle(.plain)
+                        }.buttonStyle(.plain).contextMenu { pageActions(child) }
+                            .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
+                                store.indexDroppedFiles(providers: providers, at: nil, noteID: child.id)
+                            }
                     }
                 }
             }.padding(28)
                 .background(FolderWheelRouter(store: store, pageID: note.id).frame(width: 0, height: 0))
         }.frame(maxWidth: .infinity, maxHeight: .infinity).background(Palette.desk)
+            .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
+                store.indexDroppedFiles(providers: providers, at: nil, noteID: note.id)
+            }
     }
     private var trashView: some View {
         VStack(alignment: .leading) {
-            Text("回收站").font(.title.bold()).padding()
-            List(store.workspace.notes.filter(\.deleted)) { note in HStack { Label(note.title, systemImage: note.isFolder ? "folder" : "doc.text"); Spacer(); Button("恢复") { store.recover(note.id) } } }
+            HStack {
+                Text("回收站").font(.title.bold())
+                Spacer()
+                Button("返回页面") { store.showTrash = false }
+                Button("清空回收站", role: .destructive) { store.requestPurge() }.disabled(!store.workspace.notes.contains(where: \.deleted))
+            }.padding()
+            Text("永久清除只移除页面与批注记录，原文件保留。清空前会再次确认。")
+                .font(.caption).foregroundStyle(.secondary).padding(.horizontal)
+            List(store.workspace.notes.filter(\.deleted)) { note in
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(note.title, systemImage: note.isFolder ? "folder" : "doc.text")
+                        Text("原位置：" + (note.originalParentPath ?? "旧记录未记录位置")).font(.caption).foregroundStyle(.secondary)
+                        if let date = note.deletedAt { Text(date, style: .date).font(.caption2).foregroundStyle(.secondary) }
+                        if !note.summary.isEmpty { Text(note.summary).font(.caption).lineLimit(3).foregroundStyle(.secondary) }
+                        else if !note.blocks.filter(\.isFilePlugin).isEmpty {
+                            Text(note.blocks.filter(\.isFilePlugin).prefix(4).map(\.assetName).joined(separator: " · ")).font(.caption).lineLimit(2).foregroundStyle(.secondary)
+                        }
+                        if note.ink?.isEmpty == false { Label("含手写批注", systemImage: "pencil.tip").font(.caption2).foregroundStyle(.secondary) }
+                    }
+                    Spacer(); Button("恢复") { store.recover(note.id) }
+                    Button("永久清除", role: .destructive) { store.requestPurge(note.id) }
+                }
+            }
         }
     }
 }
@@ -341,7 +404,7 @@ struct NoteTree: Identifiable {
                     }
                     anchorControls(block)
                     if block.anchorID != nil { Button("解除批注关联") { store.checkpoint(); store.editBlock(block.id) { $0.anchorID = nil } } }
-                    Button("删除内容块", role: .destructive) { store.deleteBlock(block.id) }
+                    Button("删除内容块", role: .destructive) { store.deleteBlock(block.id) }.disabled(block.locked)
                 } else {
                     Label("点击内容块边缘，查看设置。", systemImage: "cursorarrow").font(.caption).foregroundStyle(.secondary)
                 }
@@ -402,6 +465,8 @@ struct NoteTree: Identifiable {
     @ObservedObject var store: AppStore
     let noteID: UUID
     let block: Block
+    @ObservedObject var navigation = AttachmentReaderNavigation()
+    var initialPage: Int? = nil
     var onClose: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @ViewState private var page = 0
@@ -439,7 +504,7 @@ struct NoteTree: Identifiable {
                         Spacer()
                         if current.kind == .pdf {
                             Button { turnPage(-1) } label: { Image(systemName: "chevron.left") }.disabled(!paging.hasPrevious).accessibilityLabel("上一页")
-                            Text(paging.label).font(.caption.monospacedDigit())
+                            ReaderPagePicker(page: page, count: pageCount, jump: jumpPage)
                             Button { turnPage(1) } label: { Image(systemName: "chevron.right") }.disabled(!paging.hasNext).accessibilityLabel("下一页")
                         }
                         Button { zoom = max(0.25, zoom - 0.25) } label: { Image(systemName: "minus.magnifyingglass") }
@@ -452,14 +517,11 @@ struct NoteTree: Identifiable {
                         .font(.caption).foregroundStyle(.secondary).padding(.bottom, 8)
                     Divider()
                     if mode == "notebook", let notebook {
-                        zoomableEditor {
-                            NotebookEditor(session: notebook, filename: current.assetName, focus: { store.blockKeyboardFocus = false; store.formatting.clear() })
-                        }
+                        NotebookEditor(session: notebook, filename: current.assetName, documentZoom: $zoom,
+                                       focus: { store.blockKeyboardFocus = false; store.formatting.clear() })
                     } else if mode == "source", let textFile {
-                        zoomableEditor {
-                            TextFileEditor(session: textFile, filename: current.assetName, formatting: AttachmentFormat(filename: current.assetName) == .markdown ? store.formatting : nil,
-                                           focus: { store.blockKeyboardFocus = false; store.formatting.clear() })
-                        }
+                        TextFileEditor(session: textFile, filename: current.assetName, formatting: AttachmentFormat(filename: current.assetName) == .markdown ? store.formatting : nil,
+                                       documentZoom: $zoom, focus: { store.blockKeyboardFocus = false; store.formatting.clear() })
                     } else {
                         AttachmentSurface(store: store, noteID: noteID, block: current, page: page,
                                       inkEnabled: mode == "ink", textEnabled: mode == "text", fitPage: false, zoom: zoom,
@@ -468,11 +530,15 @@ struct NoteTree: Identifiable {
                     }
                 }
                 .navigationTitle(current.assetName)
+                .background(ReaderPagingKeyboard(enabled: current.kind == .pdf, turn: turnPage).frame(width: 0, height: 0))
                 #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
                 #endif
                 .toolbar {
                     ToolbarItem(placement: .confirmationAction) { Button("完成", action: close) }
+                    #if os(macOS)
+                    ToolbarItem { Button("切换全屏") { NSApp.keyWindow?.toggleFullScreen(nil) } }
+                    #endif
                     ToolbarItem { Button("撤销批注") { store.undo() }.disabled(!store.canUndo) }
                     ToolbarItem { Button("导出原件") {
                         if let url = current.assetID.map({ store.repository.asset($0) }) ?? store.attachmentURL(for: current), let data = try? Data(contentsOf: url) { original = AttachmentExport(data); exportOriginal = true }
@@ -486,15 +552,22 @@ struct NoteTree: Identifiable {
                         do { textFile = try store.textFileSession(noteID: noteID, blockID: current.id) }
                         catch { store.message = error.localizedDescription }
                     }
+                    installCloseProtection()
+                }
+                .onReceive(navigation.$request) { request in
+                    guard let request, current.kind == .pdf, pageCount > 0 else { return }
+                    jumpPage(AttachmentPagination(page: request.page, pageCount: pageCount).page)
+                    navigation.request = nil
                 }
                 .task(id: current.attachmentContentIdentity) {
                     if current.kind == .pdf {
-                        let startingPage = loadedContent == nil ? current.pdfPage : page
+                        let startingPage = loadedContent == nil ? (navigation.request?.page ?? initialPage ?? current.pdfPage) : page
                         // Save against the outgoing page before a replaced, shorter PDF
                         // clamps the reader. The locked canvas preview remains untouched.
                         guard store.prepareAttachmentNavigation() else { return }
                         pageCount = store.pdfPageCount(for: current)
                         page = AttachmentPagination(page: startingPage, pageCount: pageCount).page
+                        navigation.request = nil
                     }
                     loadedContent = current.attachmentContentIdentity
                 }
@@ -519,8 +592,18 @@ struct NoteTree: Identifiable {
         page = next
     }
     private func close() {
-        guard store.prepareAttachmentNavigation() else { return }
+        guard navigation.canClose() else { return }
         if let onClose { onClose() } else { dismiss() }
+    }
+    private func installCloseProtection() {
+        navigation.canClose = { [weak store, weak notebook, weak textFile] in
+            guard let store else { return true }
+            return store.prepareAttachmentNavigation() && (notebook?.save() ?? true) && (textFile?.save() ?? true)
+        }
+    }
+    private func jumpPage(_ next: Int) {
+        guard pageCount > 0, (0..<pageCount).contains(next), next != page, store.prepareAttachmentNavigation() else { return }
+        page = next
     }
     private func zoomableEditor<Content: View>(@ViewBuilder content: () -> Content) -> some View {
         let editor = content()

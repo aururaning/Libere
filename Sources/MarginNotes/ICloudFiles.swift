@@ -52,6 +52,8 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     private var lastViewed: [String: Date]
     private var leases: [String: Set<UUID>] = [:]
     private var downloadTasks: [String: Task<Void, Never>] = [:]
+    private var cloudPaths: Set<String> = []
+    private var prefetchTask: Task<Void, Never>?
     private var sweepRunning = false
     private var cursor = 0
     private var persistTask: Task<Void, Never>?
@@ -68,7 +70,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
         automaticRelease = preferences.object(forKey: preferenceKey + ".enabled") as? Bool ?? true
         lastViewed = (preferences.data(forKey: preferenceKey + ".access")).flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
     }
-    deinit { persistTask?.cancel(); for task in downloadTasks.values { task.cancel() } }
+    deinit { prefetchTask?.cancel(); persistTask?.cancel(); for task in downloadTasks.values { task.cancel() } }
     func path(for url: URL) -> String? { ReferencePath.relative(url, inside: root) }
     func availability(of url: URL) -> Availability { path(for: url).flatMap { states[$0] } ?? .checking }
     func retain(_ url: URL, token: UUID, now: Date = Date()) {
@@ -102,6 +104,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
         guard !Task.isCancelled, states[path] != .releasing else { return }
         switch result {
         case .success(let value):
+            if value.ubiquitous { cloudPaths.insert(path) } else { cloudPaths.remove(path) }
             if value.local { states[path] = .local }
             else if let error = value.error { states[path] = .failed(error) }
             else if value.ubiquitous { states[path] = value.downloading || downloadTasks[path] != nil ? .downloading : .remote }
@@ -179,6 +182,50 @@ struct ICloudFileSnapshot: Equatable, Sendable {
             } catch { states[path] = .checking; status = "部分文件暂时无法释放：" + error.localizedDescription }
         }
     }
+    func isCloud(_ url: URL) -> Bool { path(for: url).map { cloudPaths.contains($0) } ?? false }
+    func downloadPage(_ urls: [URL]) {
+        let unique = Array(Set(urls.filter { path(for: $0) != nil })).sorted { $0.path < $1.path }
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
+            var completed = 0
+            for url in unique {
+                guard !Task.isCancelled, let self else { return }
+                await self.refresh(url)
+                if self.availability(of: url) != .local, self.isCloud(url) {
+                    self.download(url)
+                    while !Task.isCancelled, let path = self.path(for: url), self.downloadTasks[path] != nil {
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                    }
+                }
+                guard !Task.isCancelled else { return }
+                completed += 1; self.status = "本页下载检查：\(completed) / \(unique.count)"
+            }
+        }
+    }
+    /// Explicit release ignores age, while retaining every upload/conflict/open
+    /// document/kernel protection. Visible previews must be collapsed first.
+    func releasePage(_ urls: [URL], isProtected: @MainActor (String) -> Bool = { _ in false }) async {
+        while sweepRunning {
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            if Task.isCancelled { return }
+        }
+        sweepRunning = true; defer { sweepRunning = false }
+        var released = 0, kept = 0
+        let inspect = inspect, evict = evict
+        for url in Set(urls) {
+            guard !Task.isCancelled, let path = path(for: url), Self.manages(path) else { continue }
+            guard leases[path] == nil, downloadTasks[path] == nil, !isProtected(path) else { kept += 1; continue }
+            let first = await Task.detached { Result { try inspect(url) } }.value
+            guard case .success(let metadata) = first, metadata.canEvict else { kept += 1; continue }
+            let second = await Task.detached { Result { try inspect(url) } }.value
+            guard !Task.isCancelled, case .success(let latest) = second, latest.canEvict,
+                  leases[path] == nil, downloadTasks[path] == nil, !isProtected(path) else { kept += 1; continue }
+            states[path] = .releasing
+            do { try evict(url); states[path] = .remote; cloudPaths.insert(path); released += 1 }
+            catch { states[path] = .failed(error.localizedDescription); kept += 1 }
+        }
+        status = "已释放 \(released) 个本地下载；\(kept) 个使用中、未上传或非云端文件保持本地"
+    }
     static func manages(_ path: String) -> Bool {
         guard !path.isEmpty, !path.hasPrefix("."), !path.hasPrefix("/"), !path.split(separator: "/").contains(where: { $0.hasPrefix(".") }) else { return false }
         let first = path.split(separator: "/").first.map(String.init) ?? ""
@@ -246,5 +293,34 @@ struct ICloudFileSnapshot: Equatable, Sendable {
                 .font(.caption).foregroundStyle(.secondary)
             Text(files.status).font(.caption).foregroundStyle(.secondary)
         }
+    }
+}
+
+@MainActor struct CloudFileBadge: View {
+    @ObservedObject var files: ICloudFiles
+    let url: URL
+    private var label: String {
+        switch files.availability(of: url) {
+        case .checking: return "检查中"
+        case .local: return files.isCloud(url) ? "已下载" : "本地"
+        case .remote: return "云端"
+        case .downloading: return "下载中"
+        case .releasing: return "释放中"
+        case .failed: return "下载失败"
+        case .unavailable: return "不可用"
+        }
+    }
+    private var icon: String {
+        switch files.availability(of: url) {
+        case .local: return files.isCloud(url) ? "checkmark.icloud" : "internaldrive"
+        case .remote, .downloading: return "icloud.and.arrow.down"
+        case .failed, .unavailable: return "exclamationmark.icloud"
+        default: return "icloud"
+        }
+    }
+    var body: some View {
+        Label(label, systemImage: icon).font(.system(size: 9)).foregroundStyle(.secondary)
+            .help(label).accessibilityLabel(label)
+            .task(id: url) { await files.refresh(url) }
     }
 }

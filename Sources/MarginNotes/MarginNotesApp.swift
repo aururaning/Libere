@@ -38,6 +38,9 @@ typealias ViewState<Value> = SwiftUI.State<Value>
                 Button("重做") { bootstrap.store?.redoFocused() }.keyboardShortcut("z", modifiers: [.command, .shift])
             }
             CommandMenu("笔记") {
+                Button("搜索与快速跳转") { bootstrap.store?.showingQuickSearch = true }.keyboardShortcut("k", modifiers: .command)
+                Button("显示/隐藏批注连线") { bootstrap.store?.multiSelection.showConnections.toggle() }
+                Divider()
                 Button("场景展示") { bootstrap.store?.openShowcase() }
                 Divider()
                 Button("新建笔记") { bootstrap.store?.create() }.keyboardShortcut("n", modifiers: .command)

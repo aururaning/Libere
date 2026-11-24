@@ -17,10 +17,13 @@ enum Palette {
 @MainActor struct NoteCanvas: View {
     @ObservedObject var store: AppStore
     let note: Note
+    @ObservedObject private var multi: CanvasMultiSelection
+    init(store: AppStore, note: Note) { self.store = store; self.note = note; self.multi = store.multiSelection }
     @StateObject private var contentState = CanvasContentState()
     var body: some View {
         GeometryReader { viewport in
-            let retained = Set([store.blockSelection, store.editingBlockID, store.draggingBlockID].compactMap { $0 })
+            let requestedBlock = store.revealBlockID
+            let retained = Set([store.blockSelection, store.editingBlockID, store.draggingBlockID].compactMap { $0 }).union(multi.selectedIDs)
             let blocks = contentState.blocks(in: note, viewport: viewport.size, zoom: store.zoom, preserving: retained)
             CanvasViewport(pageID: note.id, size: CGSize(width: note.width, height: note.height),
                            zoom: store.zoom, fitting: store.fitToWidth, didZoom: store.finishCanvasZoom,
@@ -30,13 +33,18 @@ enum Palette {
                            didChangeVisibleRect: { id, rect in
                                guard id == note.id else { return }
                                contentState.schedule(pageID: id, visible: rect, blocks: note.blocks)
+                           }, revealRect: note.blocks.first(where: { $0.id == requestedBlock }).map {
+                               CGRect(x: $0.frame.x, y: $0.frame.y, width: $0.visibleFrame.width, height: $0.visibleFrame.height)
+                           }, didReveal: {
+                               if store.selection == note.id && store.revealBlockID == requestedBlock { store.revealBlockID = nil }
                            })
                 .background(CanvasKeyboard(store: store).frame(width: 0, height: 0))
                 .onAppear { store.fitCanvasToViewport(viewport.size) }
                 .onChange(of: viewport.size) { _, size in store.fitCanvasToViewport(size) }
-                .onChange(of: note.id) { _, _ in store.fitCanvasToViewport(viewport.size) }
+                .onChange(of: note.id) { _, _ in multi.clear(); store.fitCanvasToViewport(viewport.size) }
                 .onChange(of: note.paper) { _, _ in store.fitCanvasToViewport(viewport.size) }
                 .onChange(of: store.fitToWidth) { _, _ in store.fitCanvasToViewport(viewport.size) }
+                .overlay(alignment: .top) { if multi.selectedIDs.count > 1 { CanvasBatchToolbar(selection: multi).padding(8) } }
                 .overlay(alignment: .bottom) {
                     if store.tool == .anchor { Text("点击放置一个批注点，随后自动回到选择 · Esc 取消")
                         .font(.caption).padding(12).background(.regularMaterial, in: Capsule()).padding(16).allowsHitTesting(false) }
@@ -50,9 +58,14 @@ enum Palette {
         ZStack(alignment: .topLeading) {
                 paperBackground
                 if store.grid { DotGrid().allowsHitTesting(false) }
+                if multi.showConnections { BranchConnections(note: note, frames: multi.previewFrames).allowsHitTesting(false) }
                 ForEach(blocks) { block in
                     BlockCard(store: store, block: block).allowsHitTesting(store.tool != .anchor && (store.tool != .ink || block.kind.hasAttachment))
                         .zIndex(store.blockSelection == block.id ? 1 : 0)
+                }
+                if let marquee = multi.marquee {
+                    Rectangle().fill(Palette.accent.opacity(0.10)).overlay(Rectangle().stroke(Palette.accent, style: StrokeStyle(lineWidth: 1 / store.zoom, dash: [5 / store.zoom])))
+                        .frame(width: marquee.width, height: marquee.height).offset(x: marquee.minX, y: marquee.minY).allowsHitTesting(false).zIndex(5)
                 }
                 let destination = InkDestination(noteID: note.id)
                 InkOverlay(data: note.ink, enabled: store.tool == .ink, options: store.inkOptions,
@@ -74,6 +87,7 @@ enum Palette {
             }
             .frame(width: note.width, height: note.height).clipped()
             .coordinateSpace(name: "note-paper")
+            .onDrop(of: ["public.file-url"], isTargeted: nil) { providers, point in store.indexDroppedFiles(providers: providers, at: point) }
             .overlay(alignment: .bottomTrailing) { Text(note.paper.title).font(.system(size: 10)).foregroundStyle(.tertiary).padding(12).allowsHitTesting(false) }
     }
     @ViewBuilder private var paperBackground: some View {
@@ -83,6 +97,12 @@ enum Palette {
         Rectangle().fill(.white).contentShape(Rectangle())
             .gesture(SpatialTapGesture(count: 2, coordinateSpace: .named("note-paper")).onEnded { store.tapCanvas(at: $0.location, count: 2) }
                 .exclusively(before: SpatialTapGesture(coordinateSpace: .named("note-paper")).onEnded { store.tapCanvas(at: $0.location) }))
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.35).sequenced(before: DragGesture(coordinateSpace: .named("note-paper")))
+                .onChanged { value in
+                    guard store.tool == .select, case .second(true, let drag?) = value else { return }
+                    if multi.marquee == nil { multi.beginMarquee(additive: false) }
+                    multi.updateMarquee(from: drag.startLocation, to: drag.location)
+                }.onEnded { _ in multi.finishMarquee() })
         #endif
     }
     private func marker(_ a: AnnotationAnchor) -> some View {
@@ -125,8 +145,9 @@ struct AnchorHitShape: Shape {
     @ObservedObject var store: AppStore
     @ObservedObject private var pointer: CanvasPointerInteraction
     let block: Block
+    @ObservedObject private var multi: CanvasMultiSelection
     init(store: AppStore, block: Block) {
-        self.store = store; self.block = block; self.pointer = store.canvasPointer
+        self.store = store; self.block = block; self.pointer = store.canvasPointer; self.multi = store.multiSelection
     }
     @GestureState private var movement = CGSize.zero
     @GestureState private var growth = CGSize.zero
@@ -139,10 +160,10 @@ struct AnchorHitShape: Shape {
         let resizing: Bool
         let noteID: UUID?
     }
-    private var selected: Bool { store.blockSelection == block.id }
+    private var selected: Bool { multi.selectedIDs.contains(block.id) }
     private var editing: Bool { store.editingBlockID == block.id }
     private var frame: Rect {
-        let proposed = pointer.preview.flatMap { $0.blockID == block.id ? $0.frame : nil }
+        let proposed = multi.previewFrames[block.id] ?? pointer.preview.flatMap { $0.blockID == block.id ? $0.frame : nil }
             ?? Rect(block.frame.x + movement.width, block.frame.y + movement.height, block.frame.width + growth.width, block.frame.height + growth.height)
         return Rect(proposed.x, proposed.y, max(100, proposed.width),
                     block.isFilePlugin && block.collapsed == true ? Block.collapsedHeight : max(80, proposed.height))
@@ -157,11 +178,11 @@ struct AnchorHitShape: Shape {
         if editing { BlockFocusBoundary(store: store, blockID: block.id, moveHandleOffset: handleOffset) }
     }
     private var snapTarget: AnnotationAnchor? {
-        guard block.kind == .text, moving, store.snap, let note = store.note else { return nil }
+        guard multi.selectedIDs.count <= 1, block.kind == .text, moving, store.snap, let note = store.note else { return nil }
         return CanvasLayout.nearest(to: frame, note: note, excluding: block.id, tolerance: 20 / store.zoom, ignoring: block.anchorID)
     }
     var body: some View {
-        let handle = selected && store.tool == .select
+        let handle = store.blockSelection == block.id && store.tool == .select
             ? Rect(frame.x + handleOffset.width, frame.y + handleOffset.height, BlockMoveHandle.hitSize, BlockMoveHandle.hitSize) : nil
         CanvasItemPlacement(geometry: CanvasItemGeometry(body: frame, handle: handle)) { card } handle: { moveHandle }
             .onChange(of: dragging) { _, active in
@@ -206,7 +227,7 @@ struct AnchorHitShape: Shape {
                 }
             }
             .overlay(alignment: .bottomTrailing) {
-                if selected && !block.locked && block.collapsed != true {
+                if selected && multi.selectedIDs.count <= 1 && !block.locked && block.collapsed != true {
                     ResizeCorner(length: min(resizeFrame.width - 3, min(30, max(18, min(frame.width, frame.height) * 0.10))), hitSize: resizeFrame.width)
                         #if os(macOS)
                         .overlay { CanvasPointerSurface(area: .resize(block.id)) }
@@ -234,7 +255,12 @@ struct AnchorHitShape: Shape {
                 Button(block.locked ? "解锁位置和大小" : "锁定位置和大小") { store.checkpoint(); store.editBlock(block.id) { $0.locked.toggle() } }
                 Button("添加文字批注") { store.addAnnotation(to: block.id) }
                 Button("自定批注点位置") { store.selectBlock(block.id); store.tool = .anchor }
-                if block.kind.hasAttachment { Button("阅读与页内批注") { openAttachment() } }
+                if block.kind.hasAttachment {
+                    Button("独立窗口阅读") { openAttachment() }
+                    #if os(macOS)
+                    Button("全屏阅读") { store.openAttachment(block, fullScreen: true) }
+                    #endif
+                }
                 if block.isFilePlugin {
                     Button("复制为引用") { store.selectBlock(block.id); store.copySelectedBlock() }
                     if let source = block.reference { Button("前往来源页面") { store.select(source.noteID); store.selectBlock(source.blockID) } }
@@ -246,13 +272,13 @@ struct AnchorHitShape: Shape {
                     Button("在系统浏览器打开") { store.openLink(block) }
                 }
                 if block.anchorID != nil { Button("解除批注关联") { store.checkpoint(); store.editBlock(block.id) { $0.anchorID = nil } } }
-                Button("删除内容块", role: .destructive) { store.deleteBlock(block.id) }
+                Button("删除内容块", role: .destructive) { store.deleteBlock(block.id) }.disabled(block.locked)
             }
     }
     private var selectableContents: some View {
         contents.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
-                        if store.tool == .select && !editing {
+                        if store.tool == .select && !editing && block.kind != .link && store.interactingBlockID != block.id {
                             selectionSurface
                                 .padding(.top, block.kind == .text ? 30 : block.kind == .file && AttachmentFormat(filename: block.assetName) != .image ? 28 : 0)
                                 .padding(.bottom, block.kind == .pdf ? CanvasItemGeometry.pdfFooterHeight : 0)
@@ -266,8 +292,9 @@ struct AnchorHitShape: Shape {
                 Text(block.isFilePlugin ? store.attachmentTitle(block, on: store.selection) : "LaTeX").font(.system(size: 11, weight: .medium)).lineLimit(1).truncationMode(.head)
                     .help(store.attachmentTitle(block, on: store.selection))
                 if block.reference != nil || block.relativeFilePath != nil { Image(systemName: "link").font(.system(size: 9)).help("文件引用") }
+                if block.isFilePlugin, let url = store.attachmentURL(for: block) { CloudFileBadge(files: store.iCloudFiles, url: url) }
                 if block.locked { Image(systemName: "lock.fill").font(.system(size: 9)) }
-                if block.anchorID != nil { Image(systemName: "link").font(.system(size: 9)) }
+                if block.anchorID != nil { Image(systemName: "text.bubble").font(.system(size: 9)).help("文字批注关联") }
                 Spacer(minLength: 0)
             }.frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
                 #if os(macOS)
@@ -278,7 +305,7 @@ struct AnchorHitShape: Shape {
             if block.kind.hasAttachment || block.kind == .link {
                 Button { store.toggleCollapsed(block.id) } label: { Image(systemName: block.collapsed == true ? "chevron.down" : "chevron.up") }.buttonStyle(.plain).disabled(block.locked).help(block.collapsed == true ? "展开预览" : "收起为标题")
             }
-            if selected && block.kind.hasAttachment { Button(action: openAttachment) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.plain).help(block.kind == .pdf || AttachmentFormat(filename: block.assetName) == .image ? "全屏阅读" : "展开阅读") }
+            if selected && block.kind.hasAttachment { Button(action: openAttachment) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.plain).help("打开阅读器") }
             if selected && block.kind == .formula { Button { store.formulaEditor = block } label: { Image(systemName: "pencil") }.buttonStyle(.plain) }
         }.foregroundStyle(selected ? Palette.accent : Color.secondary).padding(.horizontal, 8).frame(height: Block.collapsedHeight)
             .background(selected ? Palette.accent.opacity(0.08) : Color.black.opacity(0.018))
@@ -286,14 +313,14 @@ struct AnchorHitShape: Shape {
     @ViewBuilder private var selectionSurface: some View {
         #if os(macOS)
         CanvasPointerSurface(area: .body(block.id))
-            .accessibilityHint("单击选中或拖动，双击编辑或打开")
+            .accessibilityHint("单击选中或拖动，Shift 单击多选，双击编辑或打开")
         #else
         Color.clear.contentShape(Rectangle())
             .gesture(SpatialTapGesture(count: 2, coordinateSpace: .named("note-paper")).onEnded { store.tapCanvas(at: $0.location, count: 2) }
                 .exclusively(before: selectionTap))
             .simultaneousGesture(moveGesture)
             .accessibilityLabel("\(block.kind == .text ? "文字" : "资料")内容块")
-            .accessibilityHint("单击选中或拖动，双击编辑或打开")
+            .accessibilityHint("单击选中或拖动，Shift 单击多选，双击编辑或打开")
         #endif
     }
     private var moveHandle: some View {

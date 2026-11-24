@@ -103,7 +103,7 @@ import SwiftUI
     pointer.down(at: CGPoint(x: 400, y: 180), area: .paper, clickCount: 1, scale: 1)
     check(store.blockSelection == nil && store.editingBlockID == nil, "Blank paper clears selection on down")
     pointer.dragged(to: start); pointer.up(at: start)
-    check(store.note!.blocks == [a, b] && store.blockSelection == nil, "Drag starting on blank stays blank even when crossing a block")
+    check(store.note!.blocks == [a, b] && store.multiSelection.selectedIDs.contains(a.id), "Marquee starting on blank selects crossed blocks without moving them")
     for action in ["selection", "tool", "escape"] {
         reset(); pointer.down(at: start, area: .body(a.id), clickCount: 1, scale: 1)
         pointer.dragged(to: CGPoint(x: 200, y: 200))

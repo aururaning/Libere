@@ -34,6 +34,12 @@ private final class KernelLines: @unchecked Sendable {
     @Published var ready = false
     @Published var busy = false
     @Published var runningCell: Int?
+    @Published var focusedCellID: String?
+    @Published var focusRequest = UUID()
+    @Published private(set) var structureGeneration = UUID()
+    @Published private(set) var cellUndoAvailable = false
+    private var cellUndo: [Data] = []
+    private var advanceAfterRun: String?
     @Published var workingDirectory: URL
     private let write: (Data) throws -> Void
     var hasUnsavedChanges: Bool { (try? document.serialized()) != saved }
@@ -61,20 +67,68 @@ private final class KernelLines: @unchecked Sendable {
         python = candidates.first { FileManager.default.isExecutableFile(atPath: $0) } ?? "/usr/bin/python3"
     }
     func edit(_ source: String, at index: Int) {
+        guard !busy, document.cells.indices.contains(index) else { return }
         document.setSource(source, at: index)
         saveTask?.cancel(); saveTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 400_000_000)
             if !Task.isCancelled { self?.save() }
         }
     }
+    /// UI callbacks own a cell identity and a structural generation, never an
+    /// index that can point to another cell after a move, deletion or undo.
+    @discardableResult func edit(_ source: String, cellID: String, generation: UUID) -> Bool {
+        guard !busy, generation == structureGeneration,
+              let index = document.index(ofCellID: cellID) else { return false }
+        edit(source, at: index); return true
+    }
     @discardableResult func save() -> Bool {
+        saveTask?.cancel(); saveTask = nil
         do {
             let data = try document.serialized()
             if saved != data { try write(data); saved = data }
             return true
         } catch { status = "保存失败：" + error.localizedDescription; return false }
     }
-    func addCell() { guard !busy else { return }; document.addCodeCell(); save() }
+    static func commitInput() {
+        #if os(macOS)
+        if let text = NSApp?.keyWindow?.firstResponder as? NSTextView { text.unmarkText(); text.didChangeText() }
+        #endif
+    }
+    private func changeCells(_ change: (inout NotebookDocument) -> Void) {
+        guard !busy else { return }; Self.commitInput()
+        guard save(), let before = try? document.serialized() else { return }
+        change(&document)
+        if (try? document.serialized()) != before {
+            structureGeneration = UUID()
+            cellUndo.append(before)
+            while cellUndo.count > 1 && (cellUndo.count > 30 || cellUndo.reduce(0, { $0 + $1.count }) > 16 * 1024 * 1024) { cellUndo.removeFirst() }
+            cellUndoAvailable = true; save()
+        }
+    }
+    func focusCell(_ index: Int) {
+        guard document.cells.indices.contains(index) else { return }
+        focusedCellID = document.cells[index].id; focusRequest = UUID()
+    }
+    func addCell() { insertCell(at: document.cells.count) }
+    func insertCell(at index: Int, kind: String = "code") { changeCells { $0.insertCell(at: index, kind: kind) }; if !busy { focusCell(min(index, document.cells.count - 1)) } }
+    func deleteCell(_ index: Int) { changeCells { $0.removeCell(at: index) }; if !busy { focusCell(min(index, document.cells.count - 1)) } }
+    func moveCell(_ index: Int, by delta: Int) { changeCells { $0.moveCell(at: index, by: delta) }; if !busy { focusCell(index + delta) } }
+    func convertCell(_ index: Int, to kind: String) { changeCells { $0.convertCell(at: index, to: kind) }; if !busy { focusCell(index) } }
+    func clearOutputs(_ index: Int? = nil) { changeCells { $0.clearOutputs(at: index) } }
+    func undoCellChange() {
+        guard !busy, let bytes = cellUndo.last, let restored = try? NotebookDocument(data: bytes) else { return }
+        Self.commitInput(); structureGeneration = UUID(); document = restored
+        cellUndo.removeLast(); cellUndoAvailable = !cellUndo.isEmpty; save()
+    }
+    func runAndAdvance(_ index: Int) {
+        guard !busy, document.cells.indices.contains(index) else { return }; Self.commitInput()
+        let code = document.cells[index].kind == "code"
+        guard !code || ready else { status = "请先启动内核。"; return }
+        if index + 1 == document.cells.count { changeCells { $0.insertCell(at: index + 1) } }
+        guard document.cells.indices.contains(index + 1) else { return }
+        if code { advanceAfterRun = document.cells[index + 1].id; run(index) }
+        else { focusCell(index + 1) }
+    }
     func discover() {
         #if os(macOS)
         do { try ensureBridge(); try send(["op": "list"]) }
@@ -84,7 +138,7 @@ private final class KernelLines: @unchecked Sendable {
         #endif
     }
     func start() {
-        guard !busy else { return }
+        guard !busy else { return }; Self.commitInput()
         #if os(macOS)
         do {
             if ready { stop() }
@@ -95,12 +149,13 @@ private final class KernelLines: @unchecked Sendable {
         #endif
     }
     func run(_ index: Int) {
-        guard ready, !busy, document.cells.indices.contains(index), save() else { return }
+        guard ready, !busy, document.cells.indices.contains(index), document.cells[index].kind == "code" else { return }
+        Self.commitInput(); guard save() else { return }
         #if os(macOS)
         document.beginExecution(at: index); runningCell = index; busy = true; status = "正在运行单元格 \(index + 1)…"
         request = UUID().uuidString
         do { try send(["op": "execute", "id": request!, "code": document.cells[index].source]) }
-        catch { busy = false; runningCell = nil; status = error.localizedDescription }
+        catch { busy = false; runningCell = nil; advanceAfterRun = nil; status = error.localizedDescription }
         #endif
     }
     func runAll() {
@@ -115,7 +170,7 @@ private final class KernelLines: @unchecked Sendable {
         #endif
     }
     func stop() {
-        save(); queue = []
+        save(); queue = []; advanceAfterRun = nil
         #if os(macOS)
         try? send(["op": "shutdown"])
         input?.fileHandleForWriting.closeFile(); input = nil
@@ -182,8 +237,10 @@ private final class KernelLines: @unchecked Sendable {
             busy = false; runningCell = nil
             let success = value["status"] as? String == "ok"
             status = success ? "运行完成 · 输出已保存" : "单元格已停止，输出和错误已保留"
-            if !save() || !success { queue = [] }; runNext()
-        case "error": busy = false; runningCell = nil; queue = []; status = value["message"] as? String ?? "内核错误"; save()
+            if !save() || !success { queue = [] }
+            if let id = advanceAfterRun, let index = document.cells.firstIndex(where: { $0.id == id }) { focusCell(index) }
+            advanceAfterRun = nil; runNext()
+        case "error": busy = false; runningCell = nil; queue = []; advanceAfterRun = nil; status = value["message"] as? String ?? "内核错误"; save()
         default: break
         }
     }
@@ -201,6 +258,7 @@ struct AttachmentExport: FileDocument {
     @ObservedObject var session: NotebookSession
     let filename: String
     var compact = false
+    var documentZoom: Binding<Double>? = nil
     var focus: () -> Void = {}
     @ViewState private var export = false
     @ViewState private var exportDocument: AttachmentExport?
@@ -231,12 +289,18 @@ struct AttachmentExport: FileDocument {
                 Text(session.status).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 Spacer()
                 Button("添加代码单元") { session.addCell() }.disabled(session.busy)
+                Button("撤销单元格操作") { session.undoCellChange() }.disabled(session.busy || !session.cellUndoAvailable)
+                Button("清除所有输出") { session.clearOutputs() }.disabled(session.busy)
                 Button("导出 Notebook") { if let data = try? session.document.serialized() { exportDocument = AttachmentExport(data); export = true } }
             }.padding(.horizontal, 12).padding(.bottom, 10)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(session.document.cells) { cell in NotebookCellView(session: session, cell: cell, focus: focus) }
-                }.padding(14)
+            ReaderDocumentViewport(zoom: documentZoom) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 16) {
+                            ForEach(session.document.cells) { cell in NotebookCellView(session: session, cell: cell, focus: focus).id(cell.id) }
+                        }.padding(14)
+                    }.onChange(of: session.focusRequest) { _, _ in if let id = session.focusedCellID { proxy.scrollTo(id, anchor: .center) } }
+                }
             }
         }
         .task { if session.kernels.isEmpty { session.discover() } }
@@ -251,15 +315,37 @@ struct AttachmentExport: FileDocument {
     var focus: () -> Void = {}
     @ViewState private var outputHeight = CGFloat(120)
     @ViewState private var editing = false
+    private func withCell(_ generation: UUID, action: (Int) -> Void) {
+        guard generation == session.structureGeneration, let index = session.document.cells.firstIndex(where: { $0.id == cell.id }) else { return }
+        action(index)
+    }
     var body: some View {
+        let editGeneration = session.structureGeneration
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Menu("单元格") {
+                    Button("在上方插入代码") { withCell(editGeneration) { session.insertCell(at: $0) } }
+                    Button("在下方插入代码") { withCell(editGeneration) { session.insertCell(at: $0 + 1) } }
+                    Button("在下方插入 Markdown") { withCell(editGeneration) { session.insertCell(at: $0 + 1, kind: "markdown") } }
+                    Button("上移") { withCell(editGeneration) { session.moveCell($0, by: -1) } }.disabled(cell.index == 0)
+                    Button("下移") { withCell(editGeneration) { session.moveCell($0, by: 1) } }.disabled(cell.index + 1 == session.document.cells.count)
+                    Button(cell.kind == "code" ? "转换为 Markdown" : "转换为代码") { withCell(editGeneration) { session.convertCell($0, to: cell.kind == "code" ? "markdown" : "code") } }
+                    if cell.kind == "code" { Button("清除输出") { withCell(editGeneration) { session.clearOutputs($0) } } }
+                    Button("删除单元格", role: .destructive) { withCell(editGeneration) { session.deleteCell($0) } }
+                }.disabled(session.busy)
+                Spacer()
+                Text("Shift↵ 运行并前进").font(.caption2).foregroundStyle(.secondary)
+            }
             if cell.kind == "code" {
                 HStack {
-                    Button { session.run(cell.index) } label: { Image(systemName: "play.fill") }.disabled(!session.ready || session.busy)
+                    Button { withCell(editGeneration) { session.run($0) } } label: { Image(systemName: "play.fill") }.disabled(!session.ready || session.busy)
                     Text(session.runningCell == cell.index ? "In [*]" : "In [\(cell.executionCount.map(String.init) ?? " ")]").font(.caption.monospaced())
                     Spacer()
                 }
-                SourceEditor(text: Binding(get: { cell.source }, set: { session.edit($0, at: cell.index) }), focus: focus)
+                SourceEditor(text: Binding(get: { cell.source }, set: { _ = session.edit($0, cellID: cell.id, generation: editGeneration) }), focus: focus,
+                             editable: !session.busy, wantsFocus: session.focusedCellID == cell.id, focusRequest: session.focusRequest,
+                             runAndAdvance: { withCell(editGeneration) { session.runAndAdvance($0) } })
+                    .id(editGeneration)
                     .font(.system(size: 14, design: .monospaced)).frame(height: min(420, max(84, CGFloat(cell.source.components(separatedBy: "\n").count * 20 + 24))))
                     .disabled(session.busy)
                 if !cell.outputs.isEmpty {
@@ -269,12 +355,16 @@ struct AttachmentExport: FileDocument {
             } else {
                 HStack { Text(cell.kind == "markdown" ? "Markdown" : "文本").font(.caption); Spacer(); Button(editing ? "预览" : "编辑") { editing.toggle() } }
                 if editing {
-                    SourceEditor(text: Binding(get: { cell.source }, set: { session.edit($0, at: cell.index) }), focus: focus)
+                    SourceEditor(text: Binding(get: { cell.source }, set: { _ = session.edit($0, cellID: cell.id, generation: editGeneration) }), focus: focus,
+                             editable: !session.busy, wantsFocus: session.focusedCellID == cell.id, focusRequest: session.focusRequest,
+                             runAndAdvance: { withCell(editGeneration) { session.runAndAdvance($0) } })
+                    .id(editGeneration)
                         .font(.system(size: 14, design: .monospaced)).frame(minHeight: 100).disabled(session.busy)
                 } else if cell.kind == "markdown" {
                     AttachmentWebView(html: Markdown.document(cell.source), heightChanged: { outputHeight = $0 }).frame(height: outputHeight)
                 } else { Text(cell.source).font(.system(.body, design: .monospaced)).textSelection(.enabled) }
             }
         }.padding(12).background(Palette.desk, in: RoundedRectangle(cornerRadius: 10))
+            .onChange(of: session.focusRequest) { _, _ in if session.focusedCellID == cell.id && cell.kind != "code" { editing = true } }
     }
 }

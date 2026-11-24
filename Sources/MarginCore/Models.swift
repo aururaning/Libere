@@ -125,11 +125,16 @@ public struct Note: Identifiable, Codable, Equatable, Sendable {
     public var parentID: UUID?
     public var sidebarOrder: Int?
     public var trashBatchID: UUID?
+    public var deletedAt: Date?
+    public var originalParentPath: String?
+    /// Minimal CloudKit tombstones use the existing page record type.
+    public var permanentlyDeleted: Bool?
     public var title: String
     public var isFolder = false
     /// Editable folder introduction in Markdown. Nil keeps the default introduction;
     /// an empty string deliberately hides it. Optional for older notes and backups.
     public var folderOverview: String?
+    public var tags: [String]?
     /// Physical entries managed by this sidebar item. Cross-page file references
     /// do not acquire ownership of another page's source file.
     public var managedDirectoryPath: String?
@@ -209,13 +214,14 @@ public enum CanvasExtent {
     }
 }
 public struct Workspace: Codable, Equatable, Sendable {
-    public var schemaVersion = 2
+    public var schemaVersion = 3
     public var notes: [Note] = []
     /// Outbox is written atomically with notes, before enqueueing CloudKit operations.
     public var pending: Set<String> = []
     /// Durable bounded receipts make agent retries idempotent across app restarts.
     public var agentReceipts: [AgentReceipt]?
     public var fileMoveTransactionID: UUID?
+    public var purgedPages: [String: PurgedPage]?
     public init(notes: [Note] = []) { self.notes = notes }
     public func children(_ parent: UUID?) -> [Note] {
         notes.filter { !$0.deleted && $0.parentID == parent }.sorted(by:Self.sidebarLess)
@@ -245,5 +251,21 @@ public struct Workspace: Codable, Equatable, Sendable {
         guard notes.contains(where: { $0.id == id && !$0.deleted }) else { return false }
         guard let parent else { return true }
         return notes.contains { $0.id == parent && !$0.deleted } && !descendants(id).contains(parent)
+    }
+}
+
+/// Keeps only deletion identity and causal metadata after page content is purged.
+public struct PurgedPage: Codable, Equatable, Sendable {
+    public var id: UUID
+    public var date: Date
+    public var version: VersionVector
+    public var revision: UUID
+    public init(note: Note, date: Date = Date()) {
+        id = note.id; self.date = date; version = note.version; revision = note.revision
+    }
+    public var record: Note {
+        var note = Note(title: ""); note.id = id; note.deleted = true; note.permanentlyDeleted = true
+        note.deletedAt = date; note.version = version; note.revision = revision; note.modifiedAt = date
+        return note
     }
 }

@@ -95,7 +95,7 @@ import MarginCore
             guard case .saveRecord(let recordID) = change else { continue }
             let name = recordID.recordName
             do {
-                if name.hasPrefix("page_"), let uuid = UUID(uuidString: String(name.dropFirst(5))), let note = store.workspace.notes.first(where: { $0.id == uuid }) {
+                if name.hasPrefix("page_"), let uuid = UUID(uuidString: String(name.dropFirst(5))), let note = store.workspace.purgedPages?[uuid.uuidString]?.record ?? store.workspace.notes.first(where: { $0.id == uuid }) {
                     let record = self.record(name, type: "MarginPage")
                     // Unique immutable files avoid mutating a payload while CloudKit is reading it.
                     let payload = url(name + "_" + UUID().uuidString + ".payload")
@@ -140,7 +140,7 @@ import MarginCore
                     try cacheRecord(saved)
                     let name = saved.recordID.recordName
                     if name.hasPrefix("page_"), let uuid = UUID(uuidString: String(name.dropFirst(5))),
-                       let current = store.workspace.notes.first(where: { $0.id == uuid }),
+                       let current = store.workspace.purgedPages?[uuid.uuidString]?.record ?? store.workspace.notes.first(where: { $0.id == uuid }),
                        let vectorData = saved["vector"] as? Data,
                        let vector = try? JSONDecoder().decode(VersionVector.self, from: vectorData) {
                         if current.revision.uuidString == saved["revision"] as? String && current.version == vector { store.workspace.pending.remove(name) }
@@ -171,8 +171,18 @@ import MarginCore
         if record.recordType == "MarginPage" {
             guard let asset = record["payload"] as? CKAsset, let payload = asset.fileURL else { throw StoreError.corrupt }
             var remote = try JSONDecoder().decode(Note.self, from: Data(contentsOf: payload))
-            remote.blocks = remote.blocks.map(store.directories.indexed)
             guard name == "page_" + remote.id.uuidString else { throw StoreError.corrupt }
+            if remote.permanentlyDeleted == true {
+                guard store.saveEditors() else { throw CocoaError(.fileWriteUnknown) }
+                store.workspace.mergePurge(PurgedPage(note: remote, date: remote.deletedAt ?? remote.modifiedAt))
+                store.discardPurgedHistory(persist: true)
+                try cacheRecord(record); return
+            }
+            if store.workspace.purgedPageIDs.contains(remote.id) {
+                store.workspace.pending.insert(name)
+                try cacheRecord(record); return
+            }
+            remote.blocks = remote.blocks.map(store.directories.indexed)
             if let index = store.workspace.notes.firstIndex(where: { $0.id == remote.id }) {
                 let result = NoteMerge.merge(store.workspace.notes[index], remote)
                 store.workspace.notes[index] = result.primary

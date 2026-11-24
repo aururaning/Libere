@@ -106,6 +106,7 @@ import MarginCore
             }
             if let receipt = store.workspace.agentReceipts?.first(where: { $0.requestID == requestID }) {
                 guard receipt.fingerprint == fingerprint else { throw AgentFailure(409, "request_id_conflict", "同一个 requestID 不能用于不同内容。") }
+                guard receipt.resultPurged != true else { throw AgentFailure(409, "result_purged", "此请求对应的页面已永久清除，不能重放旧内容。请重新读取资料库。") }
                 return AgentHTTPResponse(body: receipt.result)
             }
             guard store.saveEditors() else { throw AgentFailure(409, "editor_unsaved", "当前编辑器有未保存的修改，请先处理。") }

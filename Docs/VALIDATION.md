@@ -1,10 +1,19 @@
-# 验证记录 · Libere 0.6.13
+# 验证记录 · Libere 0.7.0
 
-2026-11-23，Apple Silicon Mac，Xcode 27.2，build 25。
+2026-11-24，Apple Silicon Mac，Xcode 27.2，build 26。
 
-- XCTest：109 项通过；Agent 桥接：18 项通过；工程结构57个Swift源文件。Mac/iPad Simulator/iPad device SDK 构建通过。
-- 原生回归：1430 项通过，包含32项选中框全选/Unicode/五档缩放顶部三行命中/迟到请求取消、46项iCloud访问与下载/释放安全检查；编辑时改用外侧拖柄，边缘让给文字选择。
-- Markdown13、Formula10、PageLink3项专项通过。8个实际WebKit公式布局和3个mtext空白宽度案例通过，截图已目视。可重复脚本 Scripts/MathRenderChecks.swift。
-- iCloud检查用注入操作验证7天边界、首次登记无全库文件读取、分批上限、开关、上传/冲突/编辑保护、两次检查间新增内核保护、关闭时重新计时、重启账本、显式下载成功/失败；另验证真实非iCloud文件绝不释放。未调用删除原件API。
+| 检查 | 最终结果 |
+| --- | --- |
+| XCTest | 132 项通过，0 失败 |
+| 原生回归（优化编译） | 1568 项通过 |
+| Agent 桥接 | 18 项通过 |
+| Apple SDK | Mac、iPad Simulator、iPad device 全部 BUILD SUCCEEDED |
+| 工程结构 | 71 个 Swift 源文件各包含一次 |
 
-原生日志 .build/validation/native-0.6.13-debug.log 与 native-0.6.13-final.log；SDK/XCTest日志 check-0.6.13-final.log。公式渲染证据 math-render.json/png/log。真实iCloud账号和设备交互未实测；目录书签、真实loopback通信保持明确跳过，不计入通过数量。未修改或重启用户当前应用，未对用户资料执行释放。
+新增或扩展检查涵盖：多选整组事务与五档缩放搜索定位；Clipboard/Wiki/Finder固定目标/真实WK链接；标题IME与物理改名/撤销/冲突/迟到提交；回收站确认与永久清除防复活；锁定删除；RTF真实字体、连续字号及自动增高单undo；阅读窗复用、页码和键盘、关闭失败保留、非key窗口IME先提交后判定；Notebook单元结构、busy输入与稳定ID/代次抵御迟到编辑；iCloud手动批量释放的安全条件。
+
+全部测试在合成资料库执行，未对用户资料执行删除/永久清除/释放，也未重启用户应用。首轮与收尾失败记录保留：字体系统名写入RTF后规范化为HelveticaNeue，曾误记no-op撤销；已按实际持久化字体身份修正。单元结构变更后旧index回调已改为稳定ID+代次并覆盖真实marked-text拆卸。新资料格式3及最小永久清除标记通过旧备份/历史/previous/迟到保存/Agent重试过滤。
+
+本机证据：.build/validation/check-0.7.0-release.log、native-0.7.0-release.log。新增原生入口在CanvasBatchNativeChecks、ClipboardLinksNativeChecks、PageManagementNativeChecks、ReaderNotebookNativeChecks；新增Core测试在CanvasBatchTests、PermanentDeletionTests、NotebookOperationsTests、SearchAndLinksTests。
+
+原生与离屏验证不等于真实设备操作验收。目录书签和真实loopback通信保持明确跳过，不计入通过数量；真实iCloud双设备、Pencil/Sidecar未验收。安装包仅本地临时签名、未Apple公证。

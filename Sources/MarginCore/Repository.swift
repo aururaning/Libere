@@ -39,18 +39,26 @@ public final class Repository: @unchecked Sendable {
     public func load() throws -> Workspace? {
         guard FileManager.default.fileExists(atPath: workspaceURL.path) else { return nil }
         let data = try Data(contentsOf: workspaceURL)
-        guard let value = try? JSONDecoder().decode(Workspace.self, from: data) else { throw StoreError.corrupt }
-        guard (1...2).contains(value.schemaVersion) else { throw StoreError.unsupported(value.schemaVersion) }
+        guard var value = try? JSONDecoder().decode(Workspace.self, from: data) else { throw StoreError.corrupt }
+        guard (1...3).contains(value.schemaVersion) else { throw StoreError.unsupported(value.schemaVersion) }
+        value.enforcePurges()
         return value
     }
     public func save(_ value: Workspace) throws {
-        let data = try JSONEncoder().encode(value)
+        var next = value
         if FileManager.default.fileExists(atPath: workspaceURL.path) {
             let current = try Data(contentsOf: workspaceURL)
-            guard (try? JSONDecoder().decode(Workspace.self, from: current)) != nil else { throw StoreError.corrupt }
-            try Self.writeAtomically(current, to: root.appendingPathComponent("workspace.previous.json"))
+            guard var prior = try? JSONDecoder().decode(Workspace.self, from: current) else { throw StoreError.corrupt }
+            if prior.schemaVersion >= 3 || next.purgedPages?.isEmpty == false { next.schemaVersion = max(3, next.schemaVersion) }
+            // A stale writer or old backup must not remove permanent tombstones.
+            for tombstone in (prior.purgedPages ?? [:]).values { next.mergePurge(tombstone, enforce: false) }
+            for tombstone in (next.purgedPages ?? [:]).values { prior.mergePurge(tombstone, enforce: false) }
+            prior.enforcePurges()
+            let previous = next.purgedPages?.isEmpty == false ? try JSONEncoder().encode(prior) : current
+            try Self.writeAtomically(previous, to: root.appendingPathComponent("workspace.previous.json"))
         }
-        try Self.writeAtomically(data, to: workspaceURL)
+        next.enforcePurges()
+        try Self.writeAtomically(JSONEncoder().encode(next), to: workspaceURL)
     }
     /// Stage beside the destination so saving only needs access to this directory, including on exFAT.
     public static func writeAtomically(_ data: Data, to destination: URL) throws {

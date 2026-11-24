@@ -12,7 +12,14 @@ struct FileReferenceChoice: Identifiable {
     let title: String
     var id: UUID { block.id }
 }
-private struct BlockClipboard: Codable { let root: String; let source: FileReference; let block: Block }
+private struct LegacyBlockClipboard: Codable { let root: String; let source: FileReference; let block: Block }
+struct CanvasClipboard: Codable {
+    var format = 2
+    let root: String
+    let noteID: UUID
+    let blocks: [Block]
+    let anchors: [AnnotationAnchor]
+}
 
 extension AppStore {
     #if os(iOS)
@@ -126,30 +133,121 @@ extension AppStore {
             return true
         } catch { message = error.localizedDescription; return false }
     }
-    func copySelectedBlock() {
-        guard let block, block.isFilePlugin, let noteID = selection,
-              let data = try? JSONEncoder().encode(BlockClipboard(root: repository.root.path, source: FileReference(noteID: noteID, blockID: block.id), block: block)) else { return }
+    func copySelectedBlock() { _ = copySelectedBlocks(multiSelection.selectedIDs) }
+    func clipboardData(for ids: Set<UUID>) throws -> Data {
+        guard let note else { throw StoreError.corrupt }
+        let blocks = note.blocks.filter { ids.contains($0.id) }
+        guard !blocks.isEmpty else { throw StoreError.corrupt }
+        return try JSONEncoder().encode(CanvasClipboard(root: repository.root.standardizedFileURL.resolvingSymlinksInPath().path,
+            noteID: note.id, blocks: blocks, anchors: note.anchors.filter { ids.contains($0.ownerID) }))
+    }
+    @discardableResult func copySelectedBlocks(_ ids: Set<UUID>) -> Bool {
+        guard let note, let data = try? clipboardData(for: ids) else { return false }
+        let plain = note.blocks.filter { ids.contains($0.id) }.map { $0.isFilePlugin ? ($0.linkURL ?? $0.relativeFilePath ?? $0.assetName) : $0.text }.joined(separator: "\n\n")
         #if os(macOS)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setData(data, forType: .init("app.marginnotes.block-reference"))
-        NSPasteboard.general.setString(block.linkURL ?? block.assetName, forType: .string)
+        NSPasteboard.general.setData(data, forType: .init("app.libere.canvas-blocks"))
+        NSPasteboard.general.setString(plain, forType: .string)
         #else
-        UIPasteboard.general.setItems([["app.marginnotes.block-reference": data, UTType.utf8PlainText.identifier: block.linkURL ?? block.assetName]])
+        UIPasteboard.general.setItems([["app.libere.canvas-blocks":data, UTType.utf8PlainText.identifier:plain]])
         #endif
+        return true
+    }
+    @discardableResult func pasteBlocks(_ data: Data, at point: CGPoint? = nil) -> Bool {
+        do {
+            let item: CanvasClipboard
+            if let current = try? JSONDecoder().decode(CanvasClipboard.self, from: data), current.format == 2 { item = current }
+            else {
+                let old = try JSONDecoder().decode(LegacyBlockClipboard.self, from: data)
+                item = CanvasClipboard(root: old.root, noteID: old.source.noteID, blocks: [old.block], anchors: [])
+            }
+            let sameRoot = URL(fileURLWithPath: item.root).standardizedFileURL.resolvingSymlinksInPath() == repository.root.standardizedFileURL.resolvingSymlinksInPath()
+            var blocks = item.blocks
+            guard !blocks.isEmpty, blocks.count <= 5000 else { throw StoreError.corrupt }
+            for i in blocks.indices {
+                let original = blocks[i]
+                if original.relativeFilePath != nil || !original.referencedAssets.isEmpty {
+                    guard sameRoot else { throw FileIndexError.outsideLibrary }
+                    let current = workspace.notes.first { $0.id == item.noteID }?.blocks.first { $0.id == original.id }
+                    let indexed = directories.indexed(current ?? original)
+                    guard let path = indexed.relativeFilePath, ReferencePath.resolve(path, inside: repository.root) != nil else { throw FileIndexError.outsideLibrary }
+                    blocks[i].relativeFilePath = path; blocks[i].assetName = indexed.assetName
+                    blocks[i].assetID = nil; blocks[i].workingAssetID = nil; blocks[i].notebookAssetID = nil
+                    blocks[i].fileID = indexed.fileIdentity; blocks[i].contentRevision = indexed.contentRevision
+                }
+                if original.isFilePlugin {
+                    if blocks[i].fileID == nil { blocks[i].fileID = original.fileIdentity }
+                    blocks[i].reference = sameRoot ? original.reference ?? FileReference(noteID: item.noteID, blockID: original.id) : nil
+                }
+            }
+            return try appendClipboardBlocks(blocks, anchors: item.anchors, at: point)
+        } catch { message = error.localizedDescription; return false }
+    }
+    @discardableResult func appendClipboardBlocks(_ incoming: [Block], anchors: [AnnotationAnchor] = [], at point: CGPoint? = nil, noteID: UUID? = nil) throws -> Bool {
+        guard let noteID = noteID ?? selection, let index = workspace.notes.firstIndex(where: { $0.id == noteID && !$0.deleted && !$0.isFolder }), !incoming.isEmpty else { return false }
+        if selection == noteID { finishBlockEditing() }
+        guard saveEditors() else { return false }
+        let previous = workspace.notes[index]; var next = previous
+        guard incoming.allSatisfy({ $0.frame.x.isFinite && $0.frame.y.isFinite && $0.frame.width.isFinite && $0.frame.height.isFinite && $0.frame.width > 0 && $0.frame.height > 0 }) else { throw StoreError.corrupt }
+        let minX = incoming.map(\.frame.x).min()!, minY = incoming.map(\.frame.y).min()!
+        let width = incoming.map(\.frame.maxX).max()! - minX, height = incoming.map(\.frame.maxY).max()! - minY
+        let desired = Rect(max(0,point?.x ?? 28), max(0,point?.y ?? 28), width, height)
+        var frame = CanvasLayout.vacant(desired, paper: next.paper, occupied: next.blocks.map(\.visibleFrame), canvasWidth: next.width)
+        if frame == nil && !next.paper.isContinuous {
+            next.paper = next.width > 794 ? .wideContinuous : .continuous
+            frame = CanvasLayout.vacant(desired, paper: next.paper, occupied: next.blocks.map(\.visibleFrame), canvasWidth: next.width)
+        }
+        guard let frame else { message = "页面宽度不足，无法保留这些内容块的完整尺寸。"; return false }
+        guard Set(incoming.map(\.id)).count == incoming.count else { throw StoreError.corrupt }
+        let ids = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id,UUID()) })
+        let keptAnchors = anchors.filter { ids[$0.ownerID] != nil }
+        let anchorIDs = Dictionary(keptAnchors.map { ($0.id,UUID()) }, uniquingKeysWith: { first,_ in first })
+        let copies = incoming.map { original -> Block in
+            var copy = original; copy.id = ids[original.id]!
+            copy.frame.x += frame.x - minX; copy.frame.y += frame.y - minY
+            copy.anchorID = original.anchorID.flatMap { anchorIDs[$0] }
+            if var annotations = copy.pageAnnotations {
+                for key in Array(annotations.keys) {
+                    for j in annotations[key]!.texts.indices { annotations[key]!.texts[j].id = UUID() }
+                }
+                copy.pageAnnotations = annotations
+            }
+            return copy
+        }
+        next.blocks += copies
+        next.anchors += keptAnchors.compactMap { original in
+            guard let owner = ids[original.ownerID], let id = anchorIDs[original.id] else { return nil }
+            var copy = original; copy.id = id; copy.ownerID = owner; return copy
+        }
+        next.extendCanvasForContent(); next.touch(device)
+        var candidate = workspace; candidate.notes[index] = next; candidate.pending.insert("page_" + next.id.uuidString)
+        try commitAgentWorkspace(candidate, previous: previous)
+        if selection == noteID { multiSelection.select(Set(copies.map(\.id))) }
+        return true
     }
     @discardableResult func pasteReference() -> Bool {
         #if os(macOS)
-        let data = NSPasteboard.general.data(forType: .init("app.marginnotes.block-reference"))
+        let data = NSPasteboard.general.data(forType: .init("app.libere.canvas-blocks")) ?? NSPasteboard.general.data(forType: .init("app.marginnotes.block-reference"))
         #else
-        let data = UIPasteboard.general.data(forPasteboardType: "app.marginnotes.block-reference")
+        let data = UIPasteboard.general.data(forPasteboardType: "app.libere.canvas-blocks") ?? UIPasteboard.general.data(forPasteboardType: "app.marginnotes.block-reference")
         #endif
-        guard let data, let item = try? JSONDecoder().decode(BlockClipboard.self, from: data) else { return false }
-        if let current = workspace.notes.first(where: { $0.id == item.source.noteID })?.blocks.first(where: { $0.id == item.source.blockID }) {
-            appendReference(current, source: item.source, asPage: false)
-        } else if item.root == repository.root.path {
-            appendReference(item.block, source: item.source, asPage: false)
-        } else { message = "这份引用来自另一个资料库，请在原资料库中粘贴，请先把原文件手动放入当前资料库再建立索引。" }
-        return true
+        guard let data else { return false }
+        _ = pasteBlocks(data); return true
+    }
+    @discardableResult func smartPaste(_ text: String) -> Bool {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return false }
+        if WebLink.url(value) != nil { insertLink(value, mode: .card); return true }
+        let file: URL?
+        if value.hasPrefix("file://"), let url = URL(string:value), url.isFileURL { file = url }
+        else if value.hasPrefix("/") || value.hasPrefix("~/") {
+            let candidate = URL(fileURLWithPath:(value as NSString).expandingTildeInPath)
+            file = ReferencePath.relative(candidate, inside: repository.root) != nil || FileManager.default.fileExists(atPath: candidate.path) ? candidate : nil
+        }
+        else { file = nil }
+        if let file { _ = referenceFile(file); return true }
+        do { return try appendClipboardBlocks([Block(.text,frame:Rect(0,0,360,216),text:text)]) }
+        catch { message = error.localizedDescription; return true }
     }
     func copyFocused() {
         #if os(macOS)
@@ -172,7 +270,14 @@ extension AppStore {
         #endif
         if pasteReference() { return }
         #if os(macOS)
+        if let urls = NSPasteboard.general.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly:true]) as? [URL], !urls.isEmpty {
+            _ = indexFileURLs(urls); return
+        }
+        if let text = NSPasteboard.general.string(forType: .string), smartPaste(text) { return }
         NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+        #else
+        if let url = UIPasteboard.general.url, url.isFileURL { _ = indexFileURLs([url]); return }
+        if let text = UIPasteboard.general.string { _ = smartPaste(text) }
         #endif
     }
     func cutFocused() {
@@ -183,7 +288,11 @@ extension AppStore {
         #else
         if let responder = currentTextResponder { UIApplication.shared.sendAction(#selector(UIResponderStandardEditActions.cut(_:)), to: responder, from: nil, for: nil); return }
         #endif
-        if blockKeyboardFocus, let block, block.isFilePlugin { copySelectedBlock(); deleteBlock(block.id) }
+        if blockKeyboardFocus {
+            let ids = multiSelection.selectedIDs
+            guard let note, !note.blocks.contains(where: { ids.contains($0.id) && $0.locked }) else { message = "请先解锁选中的内容，再剪切。"; return }
+            if copySelectedBlocks(ids) { multiSelection.delete() }
+        }
     }
 }
 

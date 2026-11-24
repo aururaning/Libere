@@ -45,13 +45,13 @@ import MarginCore
         }
     }
 
-    func openAttachment(_ block: Block) {
+    func openAttachment(_ block: Block, page: Int? = nil, fullScreen: Bool = false) {
         guard attachmentURL(for: block) != nil, let note else { return }
         finishBlockEditing()
         #if os(macOS)
-        PDFWindow.shared.open(store: self, noteID: note.id, block: block)
+        PDFWindow.shared.open(store: self, noteID: note.id, block: block, page: page, fullScreen: fullScreen)
         #else
-        readerBlock = block
+        readerInitialPage = page; readerBlock = block
         #endif
     }
     /// Only one content editor owns the keyboard. Commit before changing its page or selection.
@@ -74,6 +74,8 @@ import MarginCore
     }
 
     func beginBlockEditing(_ id: UUID) {
+        interactingBlockID = nil
+        multiSelection.selectOnly(id)
         guard !endingBlockEditing, let block = note?.blocks.first(where: { $0.id == id }) else { return }
         // Images share the file attachment model but never enter a source editor.
         guard block.kind != .file || AttachmentFormat(filename: block.assetName) != .image else { selectBlock(id); return }
@@ -84,6 +86,8 @@ import MarginCore
     }
 
     func selectBlock(_ id: UUID, keyboard: Bool = true) {
+        interactingBlockID = nil
+        multiSelection.selectOnly(id)
         guard note?.blocks.contains(where: { $0.id == id }) == true else { return }
         finishBlockEditing()
         if draggingBlockID != id { draggingBlockID = nil }
@@ -94,6 +98,8 @@ import MarginCore
     }
 
     func clearBlockSelection() {
+        interactingBlockID = nil
+        multiSelection.clear()
         canvasPointer.cancel()
         finishBlockEditing()
         draggingBlockID = nil
@@ -159,6 +165,7 @@ import MarginCore
                 page.anchors[i].v *= current.frame.height / height
             }
         }
+        continueFontPanelLayout(blockID: current.id, previousRevision: note.revision)
     }
 }
 

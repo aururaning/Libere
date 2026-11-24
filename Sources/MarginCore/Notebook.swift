@@ -12,12 +12,18 @@ public struct NotebookCell: Identifiable {
 /// Keep all notebook/cell metadata and MIME representations, including unknown extension fields.
 public struct NotebookDocument {
     private var object: [String: Any]
+    private var runtimeCellIDs: [String]
     private var pendingClear: Set<Int> = []
     private var displays: [String: [(cell: Int, output: Int)]] = [:]
     public init(data: Data) throws {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               root["nbformat"] as? Int == 4, root["cells"] is [[String: Any]] else { throw AttachmentFormat.PreviewError.notebook }
         object = root
+        var used: Set<String> = []
+        runtimeCellIDs = (root["cells"] as! [[String: Any]]).map { cell in
+            if let id = cell["id"] as? String, !id.isEmpty, used.insert(id).inserted { return id }
+            let id = UUID().uuidString.lowercased(); used.insert(id); return id
+        }
     }
     public var kernelName: String? { (object["metadata"] as? [String: Any])?["kernelspec"].flatMap { ($0 as? [String: Any])?["name"] as? String } }
     private var rawCells: [[String: Any]] {
@@ -26,11 +32,12 @@ public struct NotebookDocument {
     }
     public var cells: [NotebookCell] {
         rawCells.enumerated().map { i, cell in
-            NotebookCell(id: cell["id"] as? String ?? "cell-\(i)", index: i, kind: cell["cell_type"] as? String ?? "raw",
+            NotebookCell(id: runtimeCellIDs[i], index: i, kind: cell["cell_type"] as? String ?? "raw",
                          source: Self.text(cell["source"]), executionCount: cell["execution_count"] as? Int,
                          outputs: cell["outputs"] as? [[String: Any]] ?? [])
         }
     }
+    public func index(ofCellID id: String) -> Int? { runtimeCellIDs.firstIndex(of: id) }
     public func serialized() throws -> Data { try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]) }
     public static func text(_ value: Any?) -> String { (value as? String) ?? (value as? [String])?.joined() ?? "" }
     public mutating func setSource(_ source: String, at index: Int) {
@@ -38,9 +45,58 @@ public struct NotebookDocument {
         cells[index]["source"] = source; rawCells = cells
     }
     public mutating func addCodeCell() {
+        insertCell(at: rawCells.count, kind: "code")
+    }
+    /// Assign stable identities only when a structural edit is requested, keeping
+    /// untouched legacy notebooks byte-structure compatible on ordinary load/save.
+    private mutating func prepareStructure() {
         var cells = rawCells
-        cells.append(["id": UUID().uuidString.lowercased(), "cell_type": "code", "source": "", "metadata": [:], "outputs": [], "execution_count": NSNull()])
+        for i in cells.indices { cells[i]["id"] = runtimeCellIDs[i] }
         rawCells = cells
+    }
+    private mutating func remapExecutionState(from old: [[String: Any]]) {
+        let newIndex = Dictionary(rawCells.enumerated().compactMap { i, cell in (cell["id"] as? String).map { ($0, i) } }, uniquingKeysWith: { a, _ in a })
+        func target(_ i: Int) -> Int? { guard old.indices.contains(i), let id = old[i]["id"] as? String else { return nil }; return newIndex[id] }
+        pendingClear = Set(pendingClear.compactMap(target))
+        for key in Array(displays.keys) {
+            displays[key] = displays[key]?.compactMap { location in target(location.cell).map { (cell: $0, output: location.output) } }
+        }
+    }
+    public mutating func insertCell(at index: Int, kind: String = "code") {
+        guard ["code", "markdown"].contains(kind) else { return }
+        prepareStructure(); var cells = rawCells; let before = cells
+        var cell: [String: Any] = ["id": UUID().uuidString.lowercased(), "cell_type": kind, "source": "", "metadata": [:]]
+        if kind == "code" { cell["outputs"] = []; cell["execution_count"] = NSNull() }
+        let destination = min(max(0, index), cells.count)
+        runtimeCellIDs.insert(cell["id"] as! String, at: destination)
+        cells.insert(cell, at: destination); rawCells = cells; remapExecutionState(from: before)
+    }
+    public mutating func removeCell(at index: Int) {
+        guard rawCells.indices.contains(index) else { return }
+        prepareStructure(); var cells = rawCells; let before = cells
+        cells.remove(at: index); runtimeCellIDs.remove(at: index); rawCells = cells; remapExecutionState(from: before)
+    }
+    public mutating func moveCell(at index: Int, by delta: Int) {
+        let (destination, overflow) = index.addingReportingOverflow(delta)
+        guard !overflow, rawCells.indices.contains(index), rawCells.indices.contains(destination), delta != 0 else { return }
+        prepareStructure(); var cells = rawCells; let before = cells; let cell = cells.remove(at: index)
+        let identity = runtimeCellIDs.remove(at: index); runtimeCellIDs.insert(identity, at: destination)
+        cells.insert(cell, at: destination); rawCells = cells; remapExecutionState(from: before)
+    }
+    public mutating func convertCell(at index: Int, to kind: String) {
+        guard rawCells.indices.contains(index), ["code", "markdown"].contains(kind) else { return }
+        prepareStructure(); var cells = rawCells; guard cells[index]["cell_type"] as? String != kind else { return }
+        clear(index)
+        cells[index]["cell_type"] = kind
+        if kind == "code" { cells[index]["outputs"] = []; cells[index]["execution_count"] = NSNull() }
+        else { cells[index].removeValue(forKey: "outputs"); cells[index].removeValue(forKey: "execution_count") }
+        rawCells = cells
+    }
+    public mutating func clearOutputs(at index: Int? = nil) {
+        let indices = index.map { [$0] } ?? Array(rawCells.indices)
+        for i in indices where rawCells.indices.contains(i) && rawCells[i]["cell_type"] as? String == "code" {
+            clear(i); var cells = rawCells; cells[i]["execution_count"] = NSNull(); rawCells = cells
+        }
     }
     public mutating func beginExecution(at index: Int) {
         clear(index)

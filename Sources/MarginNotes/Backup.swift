@@ -23,8 +23,10 @@ extension AppStore {
     func importBackup(_ url: URL) throws {
         let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }
         let payload = try JSONDecoder().decode(BackupPayload.self, from: Data(contentsOf: url))
-        guard (1...2).contains(payload.format), (1...2).contains(payload.workspace.schemaVersion) else { throw StoreError.corrupt }
+        guard (1...2).contains(payload.format), (1...3).contains(payload.workspace.schemaVersion) else { throw StoreError.corrupt }
         var incoming = payload.workspace
+        for tombstone in (workspace.purgedPages ?? [:]).values { incoming.mergePurge(tombstone, enforce: false) }
+        incoming.enforcePurges()
         for p in incoming.notes.indices {
             for b in incoming.notes[p].blocks.indices {
                 let original = incoming.notes[p].blocks[b]
@@ -44,18 +46,23 @@ extension AppStore {
                 incoming.notes[p].blocks[b] = indexed
             }
         }
-        incoming.schemaVersion = 2
+        incoming.schemaVersion = 3
         // Merge into a separate value before publishing; imports never replace the entire live library.
         var merged = workspace
-        for note in incoming.notes {
+        for tombstone in (incoming.purgedPages ?? [:]).values { merged.mergePurge(tombstone, enforce: false) }
+        merged.enforcePurges()
+        for note in incoming.notes where !merged.purgedPageIDs.contains(note.id) {
             if let i = merged.notes.firstIndex(where: { $0.id == note.id }) {
                 let result = NoteMerge.merge(merged.notes[i], note); merged.notes[i] = result.primary
                 if let conflict = result.conflict, !merged.notes.contains(where: { $0.id == conflict.id }) { merged.notes.append(conflict) }
             } else { merged.notes.append(note) }
         }
+        merged.enforcePurges()
         merged.pending.formUnion(merged.notes.map { "page_" + $0.id.uuidString })
+        merged.pending.formUnion(merged.purgedPageIDs.map { "page_" + $0.uuidString })
         try repository.save(merged); workspace = merged; cloud?.enqueue()
-        if selection == nil { selection = workspace.notes.first { !$0.deleted && !$0.isFolder }?.id }
+        discardPurgedHistory(persist: true)
+        if selection == nil || selection.map(merged.purgedPageIDs.contains) == true { selection = workspace.notes.first { !$0.deleted && !$0.isFolder }?.id }
         message = "索引与批注已合并。原文件按相对路径读取，请保留资料库文件夹及其文件。"
     }
 }

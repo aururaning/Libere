@@ -80,7 +80,7 @@ public final class WorkspaceDirectories {
     }
     @discardableResult public func migrate(_ workspace: inout Workspace) -> Bool {
         let legacy = workspace.schemaVersion == 1
-        var changed = workspace.schemaVersion != 2
+        var changed = workspace.schemaVersion != 3
         for page in workspace.notes.indices {
             for index in workspace.notes[page].blocks.indices {
                 let before = workspace.notes[page].blocks[index], after = indexed(before)
@@ -91,7 +91,7 @@ public final class WorkspaceDirectories {
             }
         }
         if legacy { FileHierarchyTransaction.bindExisting(&workspace, legacyDirectories: paths) }
-        workspace.schemaVersion = 2
+        workspace.schemaVersion = 3
         let previous = workspace.pending
         workspace.pending = workspace.pending.filter { !$0.hasPrefix("asset_") }
         return changed || previous != workspace.pending

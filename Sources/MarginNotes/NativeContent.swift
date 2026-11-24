@@ -81,25 +81,74 @@ final class HTMLState { var html = "" }
 }
 @MainActor final class PDFWindow: NSObject, NSWindowDelegate {
     static let shared = PDFWindow()
-    private var windows: [NSWindow] = []
-    private var stores: [ObjectIdentifier: AppStore] = [:]
-    func open(store: AppStore, noteID: UUID, block: Block) {
+    private struct Key: Hashable { let store: ObjectIdentifier; let note: UUID; let block: UUID }
+    private struct Entry { let window: NSWindow; let store: AppStore; let navigation: AttachmentReaderNavigation; let access: Bool }
+    private var readers: [Key: Entry] = [:]
+    private var enteringFullScreen: Set<Key> = []
+    var windowCount: Int { readers.count }
+    var presentsWindows = true
+    func existingWindow(store: AppStore, noteID: UUID, blockID: UUID) -> NSWindow? {
+        readers[Key(store: ObjectIdentifier(store), note: noteID, block: blockID)]?.window
+    }
+    func open(store: AppStore, noteID: UUID, block: Block, page: Int? = nil, fullScreen: Bool = false) {
+        let key = Key(store: ObjectIdentifier(store), note: noteID, block: block.id)
+        if let entry = readers[key] {
+            if let page { entry.navigation.show(page: page) }
+            if entry.window.isMiniaturized { entry.window.deminiaturize(nil) }
+            entry.window.title = block.assetName
+            if presentsWindows { entry.window.makeKeyAndOrderFront(nil) }
+            if fullScreen { enterFullScreen(entry.window, key: key) }
+            return
+        }
+        let navigation = AttachmentReaderNavigation()
+        if let page { navigation.show(page: page) }
+        navigation.canClose = { [weak store] in store?.prepareAttachmentNavigation() ?? true }
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 800), styleMask: [.titled, .closable, .resizable, .miniaturizable], backing: .buffered, defer: false)
         window.title = block.assetName
-        window.contentView = NSHostingView(rootView: AttachmentReader(store: store, noteID: noteID, block: block, onClose: { [weak window] in window?.close() }))
+        window.contentView = NSHostingView(rootView: AttachmentReader(store: store, noteID: noteID, block: block,
+            navigation: navigation, onClose: { [weak window] in window?.close() }))
         window.delegate = self; window.isReleasedWhenClosed = false
-        stores[ObjectIdentifier(window)] = store
-        window.collectionBehavior.insert(.fullScreenPrimary); windows.append(window); window.center(); window.makeKeyAndOrderFront(nil)
-        DispatchQueue.main.async { window.toggleFullScreen(nil) }
+        readers[key] = Entry(window: window, store: store, navigation: navigation, access: store.repository.root.startAccessingSecurityScopedResource())
+        window.collectionBehavior.insert(.fullScreenPrimary); window.center()
+        if presentsWindows { window.makeKeyAndOrderFront(nil) }
+        if fullScreen { enterFullScreen(window, key: key) }
     }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { stores[ObjectIdentifier(sender)]?.prepareAttachmentNavigation() ?? true }
+    private func enterFullScreen(_ window: NSWindow, key: Key) {
+        guard presentsWindows, !window.styleMask.contains(.fullScreen), enteringFullScreen.insert(key).inserted else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window, self.readers[key]?.window === window, window.isVisible,
+                  !window.styleMask.contains(.fullScreen) else { self?.enteringFullScreen.remove(key); return }
+            window.toggleFullScreen(nil)
+        }
+    }
+    func windowDidEnterFullScreen(_ notification: Notification) { clearFullScreenRequest(notification.object as? NSWindow) }
+    func windowDidExitFullScreen(_ notification: Notification) { clearFullScreenRequest(notification.object as? NSWindow) }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) { clearFullScreenRequest(window) }
+    private func clearFullScreenRequest(_ window: NSWindow?) {
+        for (key, entry) in readers where entry.window === window { enteringFullScreen.remove(key) }
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // The window being closed can be non-key; its pending composition must
+        // reach its own editor before the save guard decides whether to close.
+        if let text = sender.firstResponder as? NSTextView {
+            guard !text.hasMarkedText() || text.isEditable else { return false }
+            text.unmarkText(); text.didChangeText()
+        }
+        return readers.values.first { $0.window === sender }?.navigation.canClose() ?? true
+    }
     func windowWillClose(_ notification: Notification) {
         if let window = notification.object as? NSWindow {
-            stores.removeValue(forKey: ObjectIdentifier(window))?.prepareAttachmentNavigation()
-            windows.removeAll { $0 === window }
+            // Dispose the reader and its preview lease even when another caller
+            // still retains this NSWindow. Save protection has already succeeded.
+            window.contentView = nil
+            for (key, entry) in readers where entry.window === window {
+                if entry.access { entry.store.repository.root.stopAccessingSecurityScopedResource() }
+                enteringFullScreen.remove(key); readers.removeValue(forKey: key)
+            }
         }
     }
 }
+
 #else
 @MainActor struct PDFNativeView: UIViewRepresentable {
     let url: URL; let index: Int; let full: Bool

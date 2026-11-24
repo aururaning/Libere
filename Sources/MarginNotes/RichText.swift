@@ -15,7 +15,7 @@ typealias NativeColor = UIColor
 typealias NativeText = UITextView
 #endif
 
-enum TextAction { case bold, italic, highlight, grow(Double), font(String), inlineFormula, displayFormula }
+enum TextAction { case bold, italic, highlight, grow(Double), font(String), fontStyle(String, Double), inlineFormula, displayFormula }
 @MainActor final class TextFormatting: ObservableObject {
     var blockID: UUID?
     weak var view: NativeText?
@@ -40,7 +40,7 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
         beforeChange?()
         if markdown {
             switch action {
-            case .grow, .font: changeStyle?(action)
+            case .grow, .font, .fontStyle: changeStyle?(action)
             case .bold: wrap("**", "**")
             case .italic: wrap("*", "*")
             case .highlight: wrap("==", "==")
@@ -65,6 +65,8 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
                 result[.font] = font.withSize(size)
                 #endif
             case .font(let name): result[.font] = name == "system" ? NativeFont.systemFont(ofSize: font.pointSize) : (NativeFont(name: name, size: font.pointSize) ?? font)
+            case .fontStyle(let name, let size):
+                result[.font] = name == "system" ? NativeFont.systemFont(ofSize: size) : (NativeFont(name: name, size: size) ?? NativeFont.systemFont(ofSize: size))
             case .bold, .italic:
                 #if os(macOS)
                 let manager = NSFontManager.shared
@@ -160,11 +162,14 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
     var editable = true
     var requestFocus = false
     var measuredHeight: ((Block, Double) -> Void)? = nil
+    var wikiProvider: ((String) -> [WikiLinkCandidate])? = nil
+    var wikiSelectionChanged: ((String, Int) -> Void)? = nil
     let save: (Data?, String) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView(); scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: block.frame.width, height: block.frame.height - 27))
+        let text = WikiCompletingTextView(frame: NSRect(x: 0, y: 0, width: block.frame.width, height: block.frame.height - 27))
+        text.wikiProvider = block.usesMarkdown ? wikiProvider : nil
         text.isRichText = !block.usesMarkdown; text.importsGraphics = false; text.allowsUndo = true; text.drawsBackground = false
         text.isEditable = editable; text.isSelectable = editable
         if block.usesMarkdown {
@@ -183,8 +188,10 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
     }
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
-        guard let view = scroll.documentView as? NSTextView, !view.hasMarkedText() else { return }
+        guard let view = scroll.documentView as? NSTextView else { return }
         view.isEditable = editable; view.isSelectable = editable
+        (view as? WikiCompletingTextView)?.wikiProvider = block.usesMarkdown ? wikiProvider : nil
+        guard !view.hasMarkedText() else { return }
         if !requestFocus { context.coordinator.requestedFocus = false }
         if context.coordinator.lastData != block.rtf || context.coordinator.lastText != block.text || context.coordinator.fontSize != block.fontSize {
             let cursor = min(view.selectedRange().location, block.text.utf16.count)
@@ -225,7 +232,7 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
             parent.formatting.markdown = parent.block.usesMarkdown; parent.formatting.changeStyle = parent.changeStyle
             parent.formatting.didChange = { [weak self, weak view] in if let view { self?.changed(view) } }
         }
-        func textDidChange(_ notification: Notification) { if let view = notification.object as? NSTextView { changed(view) } }
+        func textDidChange(_ notification: Notification) { if let view = notification.object as? NSTextView { changed(view); (view as? WikiCompletingTextView)?.offerWikiCompletion() } }
         func changed(_ view: NSTextView) {
             guard !view.hasMarkedText() else { return }
             let source = view.string
@@ -259,6 +266,8 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
     var editable = true
     var requestFocus = false
     var measuredHeight: ((Block, Double) -> Void)? = nil
+    var wikiProvider: ((String) -> [WikiLinkCandidate])? = nil
+    var wikiSelectionChanged: ((String, Int) -> Void)? = nil
     let save: (Data?, String) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextView {
@@ -274,8 +283,8 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
     }
     func updateUIView(_ view: UITextView, context: Context) {
         context.coordinator.parent = self
-        guard view.markedTextRange == nil else { return }
         view.isEditable = editable; view.isSelectable = editable
+        guard view.markedTextRange == nil else { return }
         if !requestFocus { context.coordinator.requestedFocus = false }
         if context.coordinator.lastData != block.rtf || context.coordinator.lastText != block.text || context.coordinator.fontSize != block.fontSize {
             let cursor = min(view.selectedRange.location, block.text.utf16.count)
@@ -307,8 +316,13 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), inli
             parent.formatting.markdown = parent.block.usesMarkdown; parent.formatting.changeStyle = parent.changeStyle
             parent.formatting.didChange = { [weak self, weak view] in if let view { self?.textViewDidChange(view) } }
         }
+        func textViewDidChangeSelection(_ view: UITextView) {
+            guard parent.editable, parent.block.usesMarkdown, view.markedTextRange == nil else { return }
+            parent.wikiSelectionChanged?(view.text ?? "", view.selectedRange.location)
+        }
         func textViewDidChange(_ view: UITextView) {
             guard view.markedTextRange == nil else { return }
+            if parent.editable && parent.block.usesMarkdown { parent.wikiSelectionChanged?(view.text ?? "", view.selectedRange.location) }
             let source = view.text ?? ""
             if parent.block.usesMarkdown {
                 guard lastText != source || lastData != nil else { return }

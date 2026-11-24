@@ -40,7 +40,7 @@ struct ShowcaseCatalog: Decodable {
     func scenario(containing pageID: UUID) -> Scenario? { scenarios.first { $0.pages.contains(pageID) } }
     func validate() throws {
         let notes = backup.workspace.notes, ids = Set(notes.map(\.id))
-        guard version == 1, (1...2).contains(backup.format), (1...2).contains(backup.workspace.schemaVersion),
+        guard version == 1, (1...2).contains(backup.format), (1...3).contains(backup.workspace.schemaVersion),
               rootID == Self.rootPageID, ids.count == notes.count,
               notes.contains(where: { $0.id == rootID && $0.isFolder && $0.parentID == nil }),
               backup.workspace.descendants(rootID) == ids,
@@ -70,6 +70,7 @@ struct ShowcaseCatalog: Decodable {
         let catalog = try supplied ?? showcaseCatalog ?? ShowcaseCatalog.load()
         try catalog.validate()
         showcaseCatalog = catalog
+        if workspace.purgedPageIDs.contains(catalog.rootID) { return false }
         if workspace.notes.contains(where: { $0.id == catalog.rootID }) { return false }
         let incoming = Set(catalog.backup.workspace.notes.map(\.id))
         guard incoming.isDisjoint(with: workspace.notes.map(\.id)) else { throw ShowcaseCatalog.ContentError.collision }

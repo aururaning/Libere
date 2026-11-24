@@ -8,6 +8,8 @@ import MarginCore
     @ObservedObject var store: AppStore
     let block: Block
     private var editing: Bool { store.editingBlockID == block.id }
+    @ViewState private var wikiCompletion: WikiLinkCompletion?
+    private var interacting: Bool { store.interactingBlockID == block.id }
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 10) {
@@ -18,6 +20,15 @@ import MarginCore
                 Color.clear.contentShape(Rectangle())
                     .gesture(SpatialTapGesture(coordinateSpace: .named("note-paper")).onEnded { store.tapCanvas(at: $0.location) })
                 #endif
+                if block.usesMarkdown && !editing {
+                    Button(interacting ? "拖动模式" : "链接交互") {
+                        if interacting { store.interactingBlockID = nil }
+                        else {
+                            if store.blockSelection != block.id { store.selectBlock(block.id, keyboard: false) }
+                            store.interactingBlockID = block.id
+                        }
+                    }.help("链接交互允许直接点击预览链接；拖动模式保留正文拖动。")
+                }
                 Button(editing ? "预览" : "编辑") {
                     if editing { store.selectBlock(block.id) }
                     else { store.beginBlockEditing(block.id) }
@@ -26,22 +37,57 @@ import MarginCore
             if editing || !block.usesMarkdown {
                 RichTextEditor(block: block, formatting: store.formatting, focus: { store.beginBlockEditing(block.id) },
                                checkpoint: { store.checkpoint() }, changeStyle: { action in style(action) },
-                               editable: editing, requestFocus: editing, measuredHeight: store.growTextBlock) { rtf, source in
+                               editable: editing, requestFocus: editing, measuredHeight: store.growTextBlock,
+                               wikiProvider: { query in WikiLinks.candidates(in: store.workspace, query: query, excluding: store.selection) },
+                               wikiSelectionChanged: { text, caret in wikiCompletion = WikiLinks.completion(in: text, caretUTF16: caret) }) { rtf, source in
                     store.editBlock(block.id) { $0.text = source; $0.rtf = rtf }
                 }
             } else {
-                MarkdownWebView(html: Markdown.document(block.text, size: block.fontSize, font: block.fontFamily, tint: block.tint), layoutWidth: block.frame.width, measuredHeight: { width, height in
+                MarkdownWebView(html: Markdown.document(WikiLinks.renderingSource(block.text, in: store.workspace), size: block.fontSize, font: block.fontFamily, tint: block.tint), layoutWidth: block.frame.width, measuredHeight: { width, height in
                     guard abs(width - block.frame.width) < 2 else { return }
                     store.growTextBlock(block, contentHeight: height)
-                }).allowsHitTesting(false)
+                }, openPage: store.openLinkedPage).allowsHitTesting(interacting)
+                    .help("按住 ⌘ 单击打开链接；普通拖动仍移动内容块。输入 [[ 可补全页面引用。")
             }
         }
+        #if os(iOS)
+        .overlay(alignment: .bottomLeading) {
+            if editing, let completion = wikiCompletion {
+                let candidates = WikiLinks.candidates(in: store.workspace, query: completion.query, excluding: store.selection, limit: 6)
+                if !candidates.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(candidates) { candidate in
+                            Button { insertWiki(candidate) } label: {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(candidate.title).font(.subheadline)
+                                    Text(candidate.path).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                }.padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                            }.buttonStyle(.plain)
+                        }
+                    }.frame(maxWidth: 360).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8)).padding(6)
+                }
+            }
+        }
+        #endif
+        .onChange(of: editing) { _, active in if !active { wikiCompletion = nil } }
     }
+    #if os(iOS)
+    private func insertWiki(_ candidate: WikiLinkCandidate) {
+        guard editing, let view = store.formatting.view, view.markedTextRange == nil,
+              let completion = WikiLinks.completion(in: view.text ?? "", caretUTF16: view.selectedRange.location),
+              let start = view.position(from: view.beginningOfDocument, offset: completion.range.location),
+              let end = view.position(from: start, offset: completion.range.length), let range = view.textRange(from: start, to: end) else { return }
+        store.formatting.beforeChange?(); view.replace(range, withText: candidate.markdown)
+        view.selectedRange = NSRange(location: completion.range.location + candidate.markdown.utf16.count, length: 0)
+        store.formatting.didChange?(); wikiCompletion = nil; view.becomeFirstResponder()
+    }
+    #endif
     private func style(_ action: TextAction) {
         store.editBlock(block.id) { block in
             switch action {
             case .grow(let step): block.fontSize = min(96, max(10, block.fontSize + step))
             case .font(let name): block.fontFamily = name
+            case .fontStyle(let name, let size): block.fontFamily = name; block.fontSize = min(96,max(10,size))
             default: break
             }
         }

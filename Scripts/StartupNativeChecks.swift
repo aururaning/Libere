@@ -76,11 +76,11 @@ private actor StartupCheckGate {
     var legacy = Workspace(notes: [Note(title: "旧资料库")]); legacy.schemaVersion = 1
     try legacyRepository.save(legacy)
     let legacyPrepared = try await Task.detached { try AppStore.prepareStartup(root: legacyRoot, device: device) }.value
-    check(legacyPrepared.needsMigration && legacyPrepared.workspace?.schemaVersion == 2,
+    check(legacyPrepared.needsMigration && legacyPrepared.workspace?.schemaVersion == 3,
           "Legacy indexes are migrated during background preparation without scanning source files")
     check(try legacyRepository.load() == legacy, "A prepared or canceled library migration never rewrites the original index")
     _ = try AppStore(root: legacyRoot, prepared: legacyPrepared)
-    check(try legacyRepository.load()?.schemaVersion == 2, "Adopting the prepared library durably commits the index migration")
+    check(try legacyRepository.load()?.schemaVersion == 3, "Adopting the prepared library durably commits the index migration")
 
     let fastRoot = root.appendingPathComponent("Fast")
     let fastRepository = try Repository(root: fastRoot)
