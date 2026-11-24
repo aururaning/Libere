@@ -3,6 +3,77 @@ import SwiftUI
 import MarginCore
 #endif
 
+struct GuideButtonAnchorKey: PreferenceKey {
+    static var defaultValue: Anchor<CGRect>?
+    static func reduce(value: inout Anchor<CGRect>?, nextValue: () -> Anchor<CGRect>?) {
+        value = nextValue() ?? value
+    }
+}
+
+struct GuideTipLayout {
+    let width: CGFloat
+    let origin: CGPoint
+    let arrowX: CGFloat
+    init(target: CGRect, container: CGSize) {
+        let margin = min(16, max(0, container.width / 4))
+        width = max(1, min(320, container.width - margin * 2))
+        let x = max(margin, min(target.midX - width / 2, container.width - width - margin))
+        origin = CGPoint(x: x, y: target.maxY + 8)
+        let inset = min(24, width / 2)
+        arrowX = min(max(inset, target.midX - x), width - inset)
+    }
+}
+
+private struct GuideTipArrow: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            path.move(to: CGPoint(x: 0, y: rect.height))
+            path.addLine(to: CGPoint(x: rect.midX, y: 0))
+            path.addLine(to: CGPoint(x: rect.width, y: rect.height))
+            path.closeSubpath()
+        }
+    }
+}
+
+/// A small anchored layer keeps first use on the canvas. It never opens a modal
+/// tutorial automatically or places an invisible hit surface over the page.
+@MainActor struct GuideTipLayer: View {
+    let target: CGRect
+    let size: CGSize
+    var dismiss: () -> Void
+    var openGuide: () -> Void
+    var body: some View {
+        let layout = GuideTipLayout(target: target, container: size)
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 10).stroke(Palette.accent, lineWidth: 2)
+                .frame(width: target.width + 8, height: target.height + 8)
+                .offset(x: target.minX - 4, y: target.minY - 4).allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: 0) {
+                GuideTipArrow().fill(Palette.accent).frame(width: 16, height: 9)
+                    .padding(.leading, max(0, layout.arrowX - 8)).allowsHitTesting(false)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("教程在这里").font(.system(size: 17, weight: .semibold))
+                    Text("以后点击右上角问号，就能查看全部功能和操作方法。")
+                        .font(.system(size: 14)).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 18) {
+                        Button("查看教程", action: openGuide)
+                            .font(.system(size: 14, weight: .semibold)).foregroundStyle(Palette.accent)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .background(.white, in: RoundedRectangle(cornerRadius: 7)).buttonStyle(.plain)
+                            .accessibilityIdentifier("guide-tip-open")
+                        Button("知道了", action: dismiss).font(.system(size: 14)).buttonStyle(.plain)
+                            .accessibilityIdentifier("guide-tip-dismiss")
+                        Spacer(minLength: 0)
+                    }
+                }.foregroundStyle(.white).padding(16).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Palette.accent, in: RoundedRectangle(cornerRadius: 12))
+            }.frame(width: layout.width).shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+                .offset(x: layout.origin.x, y: layout.origin.y)
+                .accessibilityElement(children: .contain).accessibilityIdentifier("feature-guide-tip")
+        }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
 @MainActor struct FeatureGuideView: View {
     @ObservedObject var store: AppStore
     @Environment(\.dismiss) private var dismiss

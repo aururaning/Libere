@@ -35,6 +35,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
         if CommandLine.arguments.contains("--guide-only") {
             _ = try runFeatureGuideNativeChecks()
             _ = try await runGuideLifecycleNativeChecks()
+            _ = try await runGuideTipNativeChecks()
             return
         }
         var checks = 0
@@ -496,6 +497,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try runShowcaseNativeChecks()
         checks += try runFeatureGuideNativeChecks()
         checks += try await runGuideLifecycleNativeChecks()
+        checks += try await runGuideTipNativeChecks()
         checks += try await runAttachmentInteractionNativeChecks()
         checks += try await runPagingHitNativeChecks()
         checks += try runAttachmentPagingNativeChecks()

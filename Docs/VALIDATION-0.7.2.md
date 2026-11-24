@@ -7,3 +7,8 @@
 证据：.build/validation/check-0.7.2.log、native-0.7.2.log、clipboard-archive-xctest.log、feature-guide-native.log、feature-guide-1100.png、feature-guide-720.png。中间两处回归脚本假设已修正：保存后的JSON字节比较时点；允许类型改为通用data后用类型继承验证PNG/JPEG仍可选。最终完整原生回归通过。
 
 本轮所有功能测试使用隔离合成资料；没有操作用户资料库，未重启或替换/Applications中的运行应用。真实跨设备iCloud和live HTTP/MCP尚未实测；截图来自自建测试窗口。安装包未Apple公证。
+
+
+## 同版本补充：build 29
+
+首次自动教程改为右上角问号提示层；点击查看才打开说明。保留已使用0.7.2的首次标记，覆盖升级不重复提示。160 XCTest、1825优化编译原生断言、18桥接测试与三SDK通过；其中29项验证浮层真实位置、箭头、内容可见、浮层外指针命中与滚动。有效Mac窗口宽度1100与980通过。证据为check-0.7.2-build29.log、native-0.7.2-build29.log、guide-tip-check/run.log及guide-tip-detail.png。

@@ -31,13 +31,13 @@ import SwiftUI
     let first = Bootstrap(restoreOnInit: false, guideDefaults: defaults)
     first.open(root, remember: false); try await settle(first)
     defer { first.agent?.stop() }
-    check(first.error == nil && first.store?.isNewLibrary == true && first.showingGuide,
-          "The first newly created library presents the bundled guide")
+    check(first.error == nil && first.store?.isNewLibrary == true && first.showingGuideTip && !first.showingGuide,
+          "The first newly created library points to help with an overlay instead of opening a modal guide")
     check(first.store!.workspace.notes.count == 2 && !first.store!.workspace.notes.contains { $0.id == ShowcaseCatalog.rootPageID },
           "Automatic help does not insert the thirteen editable sample pages")
-    first.showingGuide = false
+    first.dismissGuideTip()
     first.open(root, remember: false); try await settle(first)
-    check(!first.showingGuide, "Reopening the same library does not redisplay the guide")
+    check(!first.showingGuide && !first.showingGuideTip, "Reopening the same library does not redisplay the guide or tip")
     // Opening the already active store explicitly flushes pending edits. Capture
     // the upgrade baseline after that save; JSON object key order is not a data
     // change, and must not be confused with tutorial reseeding during relaunch.
@@ -45,7 +45,7 @@ import SwiftUI
     let reopened = Bootstrap(restoreOnInit: false, guideDefaults: defaults)
     reopened.open(root, remember: false); try await settle(reopened)
     defer { reopened.agent?.stop() }
-    check(reopened.error == nil && reopened.store?.isNewLibrary == false && !reopened.showingGuide,
+    check(reopened.error == nil && reopened.store?.isNewLibrary == false && !reopened.showingGuide && !reopened.showingGuideTip,
           "Replacing/relaunching the application keeps an existing library free of automatic help")
     check(try Data(contentsOf: root.appendingPathComponent("workspace.json")) == saved,
           "An ordinary update does not rewrite the library to install help content")
@@ -55,14 +55,15 @@ import SwiftUI
     let upgrade = Bootstrap(restoreOnInit: false, guideDefaults: upgradeDefaults)
     upgrade.open(root, remember: false); try await settle(upgrade)
     defer { upgrade.agent?.stop() }
-    check(!upgrade.showingGuide && upgradeDefaults.bool(forKey: GuidePresentation.automaticPresentationKey),
+    check(!upgrade.showingGuide && !upgrade.showingGuideTip && upgradeDefaults.bool(forKey: GuidePresentation.automaticPresentationKey),
           "A legacy installation without the new preference is treated as an upgrade, never another first run")
-    upgrade.showingGuide = true
-    check(upgrade.showingGuide && upgrade.store!.workspace.notes.count == 2,
+    upgrade.showingGuideTip = true
+    upgrade.presentGuide()
+    check(upgrade.showingGuide && !upgrade.showingGuideTip && upgrade.store!.workspace.notes.count == 2,
           "The manual help entry remains available without seeding pages")
     upgrade.showingGuide = false
     upgrade.open(base.appendingPathComponent("second-library"), remember: false); try await settle(upgrade)
-    check(upgrade.store?.isNewLibrary == true && !upgrade.showingGuide,
+    check(upgrade.store?.isNewLibrary == true && !upgrade.showingGuide && !upgrade.showingGuideTip,
           "Creating another library after onboarding does not repeat the guide")
     print("PASS: \(count) first-use, upgrade and manual-guide lifecycle assertions")
     return count

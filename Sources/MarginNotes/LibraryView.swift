@@ -37,6 +37,8 @@ struct NoteTree: Identifiable {
     var openStorage: () -> Void = {}
     var openAgent: () -> Void = {}
     var openGuide: () -> Void = {}
+    var showGuideTip = false
+    var dismissGuideTip: () -> Void = {}
     @Environment(\.scenePhase) private var phase
     @ViewState private var showingImporter = false
     @ViewState private var importingBackup = false
@@ -125,6 +127,14 @@ struct NoteTree: Identifiable {
             }
         }
         .background(LibraryClipboardScope(store: store).frame(width: 0, height: 0))
+        .overlayPreferenceValue(GuideButtonAnchorKey.self) { anchor in
+            if showGuideTip, let anchor {
+                GeometryReader { geometry in
+                    GuideTipLayer(target: geometry[anchor], size: geometry.size,
+                                  dismiss: dismissGuideTip, openGuide: openGuide)
+                }
+            }
+        }
         .overlay(alignment: .bottomTrailing) { ClipboardPasteStatusView(coordinator: store.clipboardPastes) }
         .onReceive(timer) { _ in if phase == .active { Task { await store.cloud?.refresh(); await store.maintainICloudFiles() } } }
         .task { await store.maintainICloudFiles() }
@@ -245,7 +255,10 @@ struct NoteTree: Identifiable {
                     .id(note.id).frame(height: 31)
             }
             Spacer()
-            Button(action: openGuide) { Image(systemName: "questionmark.circle") }.buttonStyle(.plain).help("功能教程")
+            Button(action: openGuide) { Image(systemName: "questionmark.circle").frame(width: 32, height: 32).contentShape(Rectangle()) }
+                .buttonStyle(.plain).help("功能教程").accessibilityLabel("功能教程")
+                .accessibilityIdentifier("feature-guide-button")
+                .anchorPreference(key: GuideButtonAnchorKey.self, value: .bounds) { $0 }
             if !note.isFolder {
                 Button { inspector.toggle() } label: { Image(systemName: "sidebar.right") }.buttonStyle(.plain).help("画布与批注设置")
             }

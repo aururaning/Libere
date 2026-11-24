@@ -104,6 +104,7 @@ enum WorkspaceLocation {
     @Published var showingStorage = false
     @Published var showingAgent = false
     @Published var showingGuide = false
+    @Published var showingGuideTip = false
     @Published var agent: AgentController?
     @Published private(set) var isLoading = false
     private var activeURL: URL?
@@ -149,6 +150,7 @@ enum WorkspaceLocation {
     }
     private func beginRequest() -> UUID {
         openTask?.cancel()
+        showingGuideTip = false
         requestID = UUID(); isLoading = true; error = nil
         return requestID
     }
@@ -210,11 +212,13 @@ enum WorkspaceLocation {
             agent = AgentController(store:next); agent?.resume()
             isLoading = false; openTask = nil
             if !windowFixture {
-                showingGuide = GuidePresentation.consumeAutomaticPresentation(isNewLibrary: next.isNewLibrary, defaults: guideDefaults)
+                showingGuideTip = GuidePresentation.consumeAutomaticPresentation(isNewLibrary: next.isNewLibrary, defaults: guideDefaults)
             }
         } catch { failed(error, request: request) }
     }
     private func openError(_ message: String) -> NSError {
         NSError(domain: "Workspace", code: 2, userInfo: [NSLocalizedDescriptionKey: message])
     }
+    func presentGuide() { showingGuideTip = false; showingGuide = true }
+    func dismissGuideTip() { showingGuideTip = false }
 }

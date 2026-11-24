@@ -10,7 +10,8 @@ typealias ViewState<Value> = SwiftUI.State<Value>
         WindowGroup(AppBrand.name) {
             if let store = bootstrap.store {
                 LibraryView(store: store, openStorage: { bootstrap.showingStorage = true }, openAgent: { bootstrap.showingAgent = true },
-                            openGuide: { bootstrap.showingGuide = true }).preferredColorScheme(.light)
+                            openGuide: bootstrap.presentGuide, showGuideTip: bootstrap.showingGuideTip,
+                            dismissGuideTip: bootstrap.dismissGuideTip).preferredColorScheme(.light)
                     .id(store.repository.root)
                     .overlay { if bootstrap.isLoading { WorkspaceLoadingView() } }
                     .sheet(isPresented: $bootstrap.showingStorage) { WorkspaceSetup(bootstrap: bootstrap, settings: true) }
@@ -43,7 +44,7 @@ typealias ViewState<Value> = SwiftUI.State<Value>
                 Button("搜索与快速跳转") { bootstrap.store?.showingQuickSearch = true }.keyboardShortcut("k", modifiers: .command)
                 Button("显示/隐藏批注连线") { bootstrap.store?.multiSelection.showConnections.toggle() }
                 Divider()
-                Button("功能教程") { bootstrap.showingGuide = true }.disabled(bootstrap.store == nil)
+                Button("功能教程", action: bootstrap.presentGuide).disabled(bootstrap.store == nil)
                 Button("示例场景") { bootstrap.store?.openShowcase() }
                 Divider()
                 Button("新建笔记") { bootstrap.store?.create() }.keyboardShortcut("n", modifiers: .command)
