@@ -32,6 +32,7 @@ import UniformTypeIdentifiers
           && pasted[0].quote && pasted[0].tint == "blue" && pasted[0].textFormat == .richText,"Rich text, fonts, quote and tint survive complete block copy")
     check(pasted[1].text == formula.text && pasted[1].fontSize == 31 && pasted[1].kind == .formula,"Formula source and presentation survive clipboard round trip")
     check(pasted[2].anchorID != anchor.id && store.note!.anchors.first(where:{$0.id == pasted[2].anchorID})?.ownerID == pasted[0].id,"Copied branches point to copied owners without affecting original anchors")
+    check(pasted[0].reference == FileReference(noteID: sourceID, blockID: text.id), "Internal text blocks retain an index back to their original page and block")
     check(store.note?.ink == Data([1,2,3]),"Clipboard insertion leaves page handwriting untouched")
     store.undo(); check(store.note?.blocks == [text,formula,child],"One undo removes the complete pasted group")
     store.redo(); check(store.note?.blocks.count == 6,"One redo restores the complete group")
@@ -55,7 +56,10 @@ import UniformTypeIdentifiers
     check(other.smartPaste("/api/" + UUID().uuidString) && other.block?.kind == .text,"A non-file slash-prefixed string remains ordinary pasted text")
     let beforeOutside = other.note!.blocks.count
     _ = other.smartPaste(fileURL.path)
-    check(other.note!.blocks.count == beforeOutside && other.message != nil,"Smart paste refuses an original outside the chosen library")
+    await other.clipboardPastes.waitUntilIdle()
+    check(other.note!.blocks.count == beforeOutside + 1 && other.block?.relativeFilePath?.contains("Markdown/") == true,
+          "Explicit clipboard intake archives an outside original in the destination page folder")
+    check(try Data(contentsOf: fileURL) == Data("原件内容".utf8), "Clipboard archiving preserves the outside source")
 
     store.create(folder:true); store.cancelRename(); let folderID = store.selection!
     check(store.indexFileURLs([fileURL],noteID:folderID),"Dropping onto a folder creates indexed child pages")

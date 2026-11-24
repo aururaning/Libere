@@ -93,11 +93,12 @@ import MarginCore
     let block: Block
     private var editing: Bool { store.editingBlockID == block.id }
     private var isImage: Bool { AttachmentFormat(filename: block.assetName) == .image }
+    private var canEdit: Bool { AttachmentFormat(filename: block.assetName).map { $0.isTextEditable || $0 == .notebook } ?? false }
     @ViewState private var text: TextFileSession?
     @ViewState private var notebook: NotebookSession?
     var body: some View {
         VStack(spacing: 0) {
-            if !isImage {
+            if canEdit {
                 HStack {
                     Spacer()
                     Button(editing ? "预览" : "编辑") {
@@ -106,7 +107,7 @@ import MarginCore
                     }.buttonStyle(.plain).font(.caption).padding(.horizontal, 10).padding(.vertical, 5)
                 }
             }
-            if editing && store.tool != .ink && !isImage {
+            if editing && store.tool != .ink && canEdit {
                 if let notebook { NotebookEditor(session: notebook, filename: block.assetName, compact: true, focus: focus) }
                 else if let text { TextFileEditor(session: text, filename: block.assetName, formatting: AttachmentFormat(filename: block.assetName) == .markdown ? store.formatting : nil, focus: focus) }
             } else {
@@ -118,7 +119,7 @@ import MarginCore
         .onAppear { if editing { prepare() } }
     }
     private func prepare() {
-        guard !isImage else { return }
+        guard canEdit else { return }
         do {
             if AttachmentFormat(filename: block.assetName) == .notebook { notebook = try store.notebookSession(noteID: noteID, blockID: block.id) }
             else if AttachmentFormat(filename: block.assetName)?.isTextEditable == true { text = try store.textFileSession(noteID: noteID, blockID: block.id) }

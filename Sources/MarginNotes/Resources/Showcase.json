@@ -1292,5 +1292,1003 @@
       "D5B490DF-DD67-51F9-A9AD-3E13F332E5DA": "IyBOb3RlIFJhbmtlciDCtyDmvJTnpLrku6PnoIHlupMKCuS4gOS4queUqOS6jueslOiusOaQnOe0oue7k+aenOaOkuW6j+eahOWwj+WeiyBQeXRob24g56S65L6L77yM5peg56ys5LiJ5pa55L6d6LWW44CCCgojIyDooYzkuLrnuqblrpoK55u45YWz5oCn5LuO6auY5Yiw5L2O77yb5ZCM5YiG5pe25oyJ5pu05paw5pe26Ze077yb5pyA5ZCO5oyJ56iz5a6aIGlkIOaOkuW6j+OAggrlh73mlbDov5Tlm57mlrDliJfooajvvIzkuI3kv67mlLnovpPlhaXjgIIKCiMjIOacrOWcsOmqjOivgQrmioogcmFua2VyLnB5IOS4jiB0ZXN0X3Jhbmtlci5weSDmlL7lnKjlkIzkuIDnm67lvZXvvIzov5DooYzvvJoKCmBgYGJhc2gKcHl0aG9uMyAtbSB1bml0dGVzdCAtdiB0ZXN0X3Jhbmtlci5weQpgYGAKCkxpYmVyZSDkuK3lj6/ku6XpmIXor7vjgIHnvJbovpHmlofku7blubborrDlvZXlj5jmm7TvvJvov5nph4zkuI3mqKHmi58gR2l0IOaPkOS6pOaIlui/nOeoi+WQjOatpeOAggo=",
       "41227FEA-1A8B-501D-A165-E5CABD125406": "IyDmoKHlm63ml6Dpmpznoo3lnLDlm74gdjEuMCDCtyDmvJTnpLrpobnnm64KCiMjIOebruaghwrluK7liqnmlrDlkIzlrabmib7liLDlhaXlj6PjgIHlnaHpgZPjgIHnlLXmoq/lj4rln7rmnKzot6/nur/jgIIKCiMjIOiMg+WbtArkuInmoIvmlZnlrabmpbzvvJvlj6/mkJzntKLngrnkvY3vvJvmuIXmmbDnmoTot6/nur/or7TmmI7jgILmmoLkuI3ljIXlkKvlrp7ml7blr7zoiKrkuI7mi6XloLXpooTmtYvjgIIKCiMjIOaVsOaNruWtl+autQrlkI3np7DjgIHnsbvliKvjgIHlu7rnrZHjgIHmpbzlsYLjgIHmloflrZfkvY3nva7jgIHmoLjlr7nml6XmnJ/jgIHmnaXmupDjgIHlvoXnoa7orqTpl67popjjgIIKCiMjIOmqjOaUtgotIFsgXSDmr4/kuKrngrnkvY3mnInmnaXmupDkuI7moLjlr7nml6XmnJ8KLSBbIF0g5YWz6ZSu6Lev57q/5pyJ5Y+v55CG6Kej55qE5paH5a2X6K+05piOCi0gWyBdIOaJi+acuuerr+WPr+S7pemhuuW6j+mYheivuwotIFsgXSDlvoXmoLjlrp7nmoTkv6Hmga/lt7LmmI7noa7moIfms6gK"
     }
+  },
+  "guide": {
+    "version": 1,
+    "title": "Libere 功能教程",
+    "subtitle": "按功能查找入口和操作。这里的说明不会添加到你的资料库。",
+    "sections": [
+      {
+        "id": "start",
+        "title": "开始使用",
+        "symbol": "sparkles",
+        "summary": "先建一页，再把资料和想法放进来。",
+        "topics": [
+          {
+            "id": "start.library",
+            "title": "选择资料库",
+            "summary": "资料库是你自己管理的一个文件夹。",
+            "steps": [
+              "首次打开时选择本地文件夹或 iCloud Drive 文件夹。",
+              "以后从「笔记 → 存储位置…」查看或切换资料库。",
+              "切换位置会打开所选文件夹中的资料库，不会自动搬迁旧资料。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "start.page",
+            "title": "新建笔记和子页面",
+            "summary": "每张笔记都是一张可以自由排布的画布。",
+            "steps": [
+              "按 ⌘N 新建笔记，在顶部输入标题。",
+              "点标题栏「子页面」，或在侧栏右键新建子页面。",
+              "点侧栏标题切换页面，用左侧展开按钮查看层级。"
+            ],
+            "shortcuts": [
+              "⌘N",
+              "⌘⇧N"
+            ],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "start.first-actions",
+            "title": "完成第一次整理",
+            "summary": "先完成“放资料、写解释、整理位置”三个动作。",
+            "steps": [
+              "在 Finder 复制一个文件，回到笔记，将鼠标放到画布上按 ⌘V。",
+              "双击画布空白处新建文字框，写下自己的理解。",
+              "单击选中内容块，拖动移动手柄安排位置。"
+            ],
+            "shortcuts": [
+              "⌘V"
+            ],
+            "keywords": [
+              "快速入门",
+              "第一次"
+            ],
+            "note": null
+          },
+          {
+            "id": "start.guide",
+            "title": "教程与示例场景",
+            "summary": "功能教程用于查操作，示例场景用于动手试。",
+            "steps": [
+              "从「笔记 → 功能教程」随时打开这份说明，也可以在顶部搜索。",
+              "需要练习时，手动打开「笔记 → 示例场景」。",
+              "已经编辑过的示例会保留；把示例移入回收站后，普通重启不会把它们重新放回来。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "首次创建资料库时可以显示教程；覆盖安装或切换资料库不会反复自动弹出。"
+          }
+        ]
+      },
+      {
+        "id": "canvas",
+        "title": "画布与滚动",
+        "symbol": "rectangle.and.hand.point.up.left",
+        "summary": "在页面上移动、缩放和安排内容。",
+        "topics": [
+          {
+            "id": "canvas.select-move",
+            "title": "选择、移动和调整大小",
+            "summary": "内容块的位置由你决定。",
+            "steps": [
+              "单击内容块将它选中；拖动出现的移动手柄移动整个块。",
+              "拖动右下角调整角改变大小。",
+              "双击文字进入编辑，点击画布空白处或按 Esc 结束选择。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "canvas.zoom",
+            "title": "缩放与铺满宽度",
+            "summary": "放大阅读时，画布位置和内容编辑是两件独立的事。",
+            "steps": [
+              "使用触控板双指捏合，或「笔记」菜单中的放大、缩小。",
+              "按 ⌘0 将页面铺满可视宽度。",
+              "用右侧画布设置选择纸张；纵向长页会随内容向下延展。"
+            ],
+            "shortcuts": [
+              "⌘+",
+              "⌘−",
+              "⌘0"
+            ],
+            "keywords": [
+              "缩放",
+              "连续纸张"
+            ],
+            "note": null
+          },
+          {
+            "id": "canvas.wheel",
+            "title": "滚轮跟随选择",
+            "summary": "先决定滚动整页还是某个资料块。",
+            "steps": [
+              "没有选中内容块时，滚轮滚动外层页面。",
+              "选中可滚动的 PDF、代码或其他内容块后，滚轮滚动该块。",
+              "到块的顶部或底部时，滚轮仍由该块接收；点击空白处取消选择后再滚动整页。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "文件夹介绍和目录区域同样按当前选择接收滚轮。"
+          },
+          {
+            "id": "canvas.grid-layout",
+            "title": "点阵、吸附和整理版面",
+            "summary": "用辅助工具整理普通内容块，同时保留手写和批注的位置。",
+            "steps": [
+              "打开右侧画布设置，按需切换「显示点阵」和「文字吸附对齐」。",
+              "拖动文字框接近批注点时，查看吸附提示。",
+              "需要整体整理时使用「整理版面」；不适合自动调整的内容会提示手动处理。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "手写不会参与吸附或自动排版；锁定内容、关联批注和页内批注也会受到保护。"
+          }
+        ]
+      },
+      {
+        "id": "text",
+        "title": "文字与公式",
+        "symbol": "textformat",
+        "summary": "把简短想法、长文和数学推导写在画布上。",
+        "topics": [
+          {
+            "id": "text.markdown",
+            "title": "Markdown 文字框",
+            "summary": "直接输入标题、列表、引用、表格与公式。",
+            "steps": [
+              "双击文字框进入编辑；在空白处双击可以新建文字框。",
+              "用 # 标题、- 列表、**加粗** 和 ==荧光标记== 组织内容。",
+              "结束编辑后查看排版预览；需要继续修改时再双击。"
+            ],
+            "shortcuts": [
+              "⌘⇧T"
+            ],
+            "keywords": [
+              "Markdown",
+              "表格",
+              "清单"
+            ],
+            "note": null
+          },
+          {
+            "id": "text.style",
+            "title": "字体、字号和强调",
+            "summary": "可以按内容需要调整文字的呈现。",
+            "steps": [
+              "选中文字框，在右侧属性面板调整字体、字号和底色。",
+              "在编辑器中选中文字后，可使用加粗、斜体和荧光标记。",
+              "需要醒目的批注时打开「左侧强调线」。"
+            ],
+            "shortcuts": [
+              "⌘B",
+              "⌘I",
+              "⌘⇧H"
+            ],
+            "keywords": [
+              "富文本",
+              "宋体",
+              "等宽"
+            ],
+            "note": null
+          },
+          {
+            "id": "text.math",
+            "title": "行内公式和公式块",
+            "summary": "数学表达可以嵌在段落中，也可以单独摆放。",
+            "steps": [
+              "在 Markdown 中用 $…$ 输入行内公式，用 $$…$$ 输入独立公式。",
+              "按 ⌘⇧M 或点工具栏「公式」，创建可移动的公式块。",
+              "选中公式块后点「编辑公式」，修改 LaTeX 源码。"
+            ],
+            "shortcuts": [
+              "⌘⇧M"
+            ],
+            "keywords": [
+              "LaTeX",
+              "数学",
+              "分式",
+              "离线公式"
+            ],
+            "note": "公式随应用离线排版；输入有误时保留源码供你修改。"
+          },
+          {
+            "id": "text.paste",
+            "title": "在文字中粘贴",
+            "summary": "文字输入与画布粘贴使用各自合适的位置。",
+            "steps": [
+              "光标在文字编辑器中时，⌘V 将普通文本粘到文字光标处。",
+              "没有在编辑文字时，粘贴普通文本会生成新的文字框。",
+              "复制的是文件或图片时，在主画布粘贴会作为资料块处理。"
+            ],
+            "shortcuts": [
+              "⌘V"
+            ],
+            "keywords": [
+              "剪贴板",
+              "文本"
+            ],
+            "note": null
+          }
+        ]
+      },
+      {
+        "id": "ink",
+        "title": "手写与批注点",
+        "symbol": "pencil.and.outline",
+        "summary": "在页面、资料旁边和资料内部留下自己的理解。",
+        "topics": [
+          {
+            "id": "ink.tools",
+            "title": "画布手写",
+            "summary": "手写笔迹独立保存，不会被自动整理移动。",
+            "steps": [
+              "在工具栏选择「手写」。",
+              "选择压感笔、均匀线条、荧光笔或整笔橡皮，再调整颜色和粗细。",
+              "在空白画布上书写；切回「选择」继续操作内容块。"
+            ],
+            "shortcuts": [
+              "⌘Z"
+            ],
+            "keywords": [
+              "Apple Pencil",
+              "橡皮",
+              "荧光笔"
+            ],
+            "note": null
+          },
+          {
+            "id": "ink.branches",
+            "title": "页外文字批注",
+            "summary": "把解释接在正在阅读的资料旁边。",
+            "steps": [
+              "选中资料块，在右侧点「添加页外文字批注」。",
+              "在出现的文字框中输入说明，拖动它安排位置。",
+              "点击资料旁的批注点可以再次打开对应批注。"
+            ],
+            "shortcuts": [
+              "Esc"
+            ],
+            "keywords": [
+              "分支",
+              "连线",
+              "批注"
+            ],
+            "note": null
+          },
+          {
+            "id": "ink.anchors",
+            "title": "多个独立批注点",
+            "summary": "同一份资料可以有多个位置不同的批注入口。",
+            "steps": [
+              "选中资料后点「自定批注点位置」，再在画布上点击落点。",
+              "在右侧批注点列表中分别调整位置和关联方式。",
+              "需要拆开文字与资料时，对选中文字使用「解除批注关联」。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "每个批注点独立配置；手写笔迹不参与文字吸附。"
+          },
+          {
+            "id": "ink.connections",
+            "title": "查看或隐藏批注连线",
+            "summary": "连线帮助追溯想法，也可以暂时隐藏以专注阅读。",
+            "steps": [
+              "在「笔记」菜单切换「显示/隐藏批注连线」。",
+              "隐藏只改变显示，不会删除批注或其关联。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          }
+        ]
+      },
+      {
+        "id": "pdf",
+        "title": "PDF 与阅读器",
+        "symbol": "doc.richtext",
+        "summary": "在画布预览资料，或进入独立窗口专注阅读。",
+        "topics": [
+          {
+            "id": "pdf.reader",
+            "title": "打开独立阅读窗口",
+            "summary": "画布、属性面板和搜索入口会复用同一份资料的阅读窗口。",
+            "steps": [
+              "双击 PDF，或在右侧点「阅读与页内批注」。",
+              "在阅读窗口中缩放、浏览资料，也可以切换全屏。",
+              "关闭阅读窗口后，原画布和批注仍然保留。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "pdf.pages",
+            "title": "翻页和跳转页码",
+            "summary": "无需从第一页一直翻到目标位置。",
+            "steps": [
+              "使用资料预览或阅读器的上一页、下一页按钮。",
+              "在页码框输入目标页码并确认跳转。",
+              "不同页面的页内批注分别保存，页外批注不随翻页消失。"
+            ],
+            "shortcuts": [
+              "Enter"
+            ],
+            "keywords": [
+              "页码",
+              "翻页"
+            ],
+            "note": null
+          },
+          {
+            "id": "pdf.annotations",
+            "title": "PDF 页内文字和手写批注",
+            "summary": "在原文对应位置写下补充内容。",
+            "steps": [
+              "打开阅读器，选择文字批注或手写工具。",
+              "文字工具下双击页面放置文字；手写工具下直接书写。",
+              "修改完成后切回选择或关闭窗口，批注会保存到资料库。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "批注与原 PDF 分开保存，导出原件不会把这些批注烧录进 PDF。"
+          },
+          {
+            "id": "pdf.lock",
+            "title": "锁定 PDF",
+            "summary": "固定画布中的资料位置和预览页，继续保留批注能力。",
+            "steps": [
+              "选中 PDF，打开「锁定位置与大小」。",
+              "锁定后不再拖动、缩放其外框或切换画布预览页。",
+              "仍可打开独立阅读器浏览其他页并做批注；需要移动时再解锁。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "pdf.collapse",
+            "title": "展开、收起与导出原件",
+            "summary": "暂时收起资料，为思考腾出空间。",
+            "steps": [
+              "使用资料块标题栏的展开/收起按钮切换显示。",
+              "需要一份原文件时，在阅读器中选择「导出原件」。",
+              "收起不会删除文件或批注，展开后可继续阅读。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          }
+        ]
+      },
+      {
+        "id": "files",
+        "title": "图片与各种文件",
+        "symbol": "doc.on.doc",
+        "summary": "支持预览的格式直接阅读，其他文件也能作为资料卡收纳。",
+        "topics": [
+          {
+            "id": "files.image",
+            "title": "图片预览与批注",
+            "summary": "图片可以和文字、PDF 放在同一画布上。",
+            "steps": [
+              "复制图片文件或截图，在主画布按 ⌘V。",
+              "选中图片可调整资料块大小；双击进入独立阅读。",
+              "使用页内文字和手写工具，在图片对应位置留下说明。"
+            ],
+            "shortcuts": [
+              "⌘V"
+            ],
+            "keywords": [
+              "PNG",
+              "JPEG",
+              "HEIC",
+              "截图"
+            ],
+            "note": null
+          },
+          {
+            "id": "files.generic",
+            "title": "文档、音视频与压缩包",
+            "summary": "没有内嵌预览的格式仍然可以放进页面。",
+            "steps": [
+              "复制文件并粘贴到画布，查看生成的文件卡片。",
+              "卡片显示文件名和类型。",
+              "点「打开原文件」，使用系统关联的应用继续处理。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "通用文件卡片不把二进制内容当文本解析，也不会因粘贴而自动执行文件。"
+          },
+          {
+            "id": "files.index",
+            "title": "添加已有文件索引",
+            "summary": "对已经位于资料库内的文件，直接记录原路径。",
+            "steps": [
+              "把文件放到资料库文件夹中。",
+              "选择「添加文件索引 → 添加索引并展开」或「添加索引并收起」。",
+              "也可以把库内文件从 Finder 拖到画布；在文件夹页面拖入会生成子页面。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "普通“添加索引”不复制文件。剪贴板粘贴库外文件则使用归档流程。"
+          },
+          {
+            "id": "files.reference",
+            "title": "跨页引用已有资料",
+            "summary": "多个页面可以指向同一个库内原文件。",
+            "steps": [
+              "在工具栏点「引用」，搜索文件名或来源页面。",
+              "选择资料，把它放到当前页面；也可选择引用为子页面。",
+              "点击内容块的来源入口可以回到原页面。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "引用共享原文件路径；修改原文件会影响引用它的其他页面。"
+          }
+        ]
+      },
+      {
+        "id": "code",
+        "title": "代码与 Notebook",
+        "symbol": "curlybraces",
+        "summary": "阅读源码、修改文件、运行实验，并保留解释和输出。",
+        "topics": [
+          {
+            "id": "code.source",
+            "title": "编辑代码和文本文件",
+            "summary": "源码块直接编辑资料库里的原文件。",
+            "steps": [
+              "展开源码、Markdown 或 HTML 文件，点「编辑」。",
+              "修改后查看底部保存状态，或按 ⌘S 保存。",
+              "需要另存修改稿时使用「导出修改稿」。"
+            ],
+            "shortcuts": [
+              "⌘S"
+            ],
+            "keywords": [
+              "Python",
+              "Swift",
+              "JSON",
+              "源码"
+            ],
+            "note": "保存会更新原文件；若发现外部修改冲突，应用会保留恢复稿并提示处理。"
+          },
+          {
+            "id": "code.notebook-start",
+            "title": "启动 Notebook 内核",
+            "summary": "先选择 Python 环境，再决定运行哪些代码。",
+            "steps": [
+              "展开 .ipynb 文件，进入编辑。",
+              "在 Mac 上选择 Python 路径、刷新内核，选择可用内核后点「启动内核」。",
+              "点单元格运行按钮或「运行全部」，在输出区查看结果。"
+            ],
+            "shortcuts": [
+              "Shift+Enter"
+            ],
+            "keywords": [
+              "Jupyter",
+              "Python环境"
+            ],
+            "note": "代码不会因粘贴或打开自动执行。iPad 可查看、编辑和同步 Notebook，内核运行需要 Mac。"
+          },
+          {
+            "id": "code.notebook-cells",
+            "title": "管理 Notebook 单元格",
+            "summary": "增删和调整单元格时，仍可继续编辑原有内容。",
+            "steps": [
+              "打开单元格菜单，在上方或下方插入代码/Markdown。",
+              "使用上移、下移、类型转换或删除来调整结构。",
+              "Shift+Enter 运行并前进；在末尾会创建下一格。"
+            ],
+            "shortcuts": [
+              "Shift+Enter"
+            ],
+            "keywords": [],
+            "note": "代码单元需要内核就绪才能运行；普通文字撤销和“撤销单元格操作”分别保留。"
+          },
+          {
+            "id": "code.notebook-output",
+            "title": "输出、停止与导出",
+            "summary": "控制运行状态，并保存可继续工作的 Notebook。",
+            "steps": [
+              "运行卡住时点「中断」；不再使用时点「停止」。",
+              "使用单格「清除输出」或「清除所有输出」整理显示。",
+              "点「导出 Notebook」保存一份带当前单元和输出的文件。"
+            ],
+            "shortcuts": [
+              "⌘Z"
+            ],
+            "keywords": [
+              "重启内核",
+              "工作目录"
+            ],
+            "note": null
+          },
+          {
+            "id": "code.web",
+            "title": "网页链接与 HTML",
+            "summary": "用卡片、已获取的 HTML 或内嵌浏览器查看网页。",
+            "steps": [
+              "复制 http/https 链接，在画布粘贴生成网页卡片。",
+              "使用工具栏的网页菜单选择卡片、HTML 或浏览器模式。",
+              "需要外部浏览器时使用链接的打开入口。"
+            ],
+            "shortcuts": [
+              "⌘⌥⇧V"
+            ],
+            "keywords": [],
+            "note": "HTML 获取需要联网，并可能无法完整保留依赖脚本或外部资源的网页。"
+          }
+        ]
+      },
+      {
+        "id": "organize",
+        "title": "文件夹与文件管理",
+        "symbol": "folder",
+        "summary": "侧栏层级会和你管理的原文件一起整理。",
+        "topics": [
+          {
+            "id": "organize.folder",
+            "title": "文件夹、介绍与目录",
+            "summary": "让一个文件夹成为主题或项目首页。",
+            "steps": [
+              "在侧栏新建文件夹，输入清晰的名称。",
+              "打开文件夹，点「编辑介绍」撰写 Markdown 说明。",
+              "使用「插入子页面」或「插入目录」，把说明与下面的内容连接起来。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "organize.rename-move",
+            "title": "重命名和移动页面",
+            "summary": "管理页面时，同步整理它拥有的原文件。",
+            "steps": [
+              "侧栏选中页面后按 Enter 重命名，或右键选择「重命名」。",
+              "拖动侧栏项目调整层级；也可右键「移动到…」选择目标。",
+              "需要核对实际位置时，右键选择「打开原文件夹」。"
+            ],
+            "shortcuts": [
+              "Enter",
+              "⌘Z"
+            ],
+            "keywords": [],
+            "note": "同名目标会被拒绝以保护已有文件；引用路径和已打开编辑器的路径会一起更新。"
+          },
+          {
+            "id": "organize.order",
+            "title": "层级、顺序和展开",
+            "summary": "把正在做的事情放在容易找到的位置。",
+            "steps": [
+              "用侧栏展开按钮显示或收起子项目。",
+              "拖到条目之间调整顺序，拖到文件夹内部改变归属。",
+              "移动前留意插入位置提示，完成后用 ⌘Z 撤销不满意的整理。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": null
+          }
+        ]
+      },
+      {
+        "id": "find",
+        "title": "搜索、链接与标签",
+        "symbol": "magnifyingglass",
+        "summary": "从关键词找到内容，再通过来源和引用继续阅读。",
+        "topics": [
+          {
+            "id": "find.search",
+            "title": "快速搜索与跳转",
+            "summary": "集中搜索标题、笔记内容、文件名、标签和批注。",
+            "steps": [
+              "按 ⌘K 打开搜索面板。",
+              "输入关键词；可组合多个词，或用引号搜索短语。",
+              "选择结果跳到对应页面、内容块或页内批注。"
+            ],
+            "shortcuts": [
+              "⌘K"
+            ],
+            "keywords": [],
+            "note": "搜索使用资料库已有的索引与笔记文本，不会为了搜索下载并扫描所有原文件。"
+          },
+          {
+            "id": "find.links",
+            "title": "插入页面引用",
+            "summary": "把相关页面串起来，页面改名后仍可追踪。",
+            "steps": [
+              "编辑文字时输入 [[，搜索并选择一个目标页面。",
+              "接受候选项后插入页面链接。",
+              "在预览里点击链接；画布选择状态下可用 ⌘ 单击跳转。"
+            ],
+            "shortcuts": [
+              "[[",
+              "⌘单击"
+            ],
+            "keywords": [
+              "双向链接",
+              "Wiki"
+            ],
+            "note": null
+          },
+          {
+            "id": "find.tags",
+            "title": "标签与反向链接",
+            "summary": "给页面加分类，并找出谁引用了它。",
+            "steps": [
+              "在页面的标签区域添加或移除标签。",
+              "搜索时输入 #标签，再加关键词缩小范围。",
+              "查看反向链接列表，打开引用当前页的其他页面。"
+            ],
+            "shortcuts": [
+              "#标签"
+            ],
+            "keywords": [
+              "backlinks",
+              "标签过滤"
+            ],
+            "note": null
+          },
+          {
+            "id": "find.source",
+            "title": "复制内容后回到来源",
+            "summary": "应用内复制的内容保留原页面和内容块的来源。",
+            "steps": [
+              "选中内容块后复制，切换到另一个页面再粘贴。",
+              "在新块上使用来源入口跳回原页面。",
+              "若复制的是文件，仍共用同一个原文件，不再次归档。"
+            ],
+            "shortcuts": [
+              "⌘C",
+              "⌘V"
+            ],
+            "keywords": [
+              "来源引用",
+              "跨页复制"
+            ],
+            "note": null
+          }
+        ]
+      },
+      {
+        "id": "selection",
+        "title": "多选、锁定与撤销",
+        "symbol": "square.on.square",
+        "summary": "成组整理内容，并随时撤回不满意的操作。",
+        "topics": [
+          {
+            "id": "selection.multi",
+            "title": "框选与追加选择",
+            "summary": "一次选择多个普通内容块。",
+            "steps": [
+              "在选择工具下，从画布空白处拖出选框。",
+              "按住 Shift 单击内容块，追加或取消单个选择。",
+              "拖动选中组的移动手柄，让整组一起移动。"
+            ],
+            "shortcuts": [
+              "Shift+单击",
+              "Esc"
+            ],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "selection.align",
+            "title": "对齐与等距分布",
+            "summary": "用多选工具栏把普通资料块排整齐。",
+            "steps": [
+              "先选中两个或更多内容块。",
+              "打开「对齐与分布」，选择左/右/上/下或居中对齐。",
+              "至少选择三个适合的块后，可使用水平或垂直等距分布。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "手写、锁定内容和关联批注不参与自动调整，避免改变已有批注位置。"
+          },
+          {
+            "id": "selection.lock",
+            "title": "锁定、复制、剪切与删除",
+            "summary": "用锁定保护暂时不想改变的内容。",
+            "steps": [
+              "选中单个块或多个块，使用「锁定」保护位置。",
+              "按 ⌘C 复制；未锁定的块可用 ⌘X 剪切。",
+              "选中块后用删除键移除；需要改变锁定内容时先解锁。"
+            ],
+            "shortcuts": [
+              "⌘C",
+              "⌘X",
+              "Delete"
+            ],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "selection.undo",
+            "title": "文字撤销与画布撤销",
+            "summary": "不同编辑动作各自保留合适的撤销记录。",
+            "steps": [
+              "正在编辑文字时，⌘Z 撤销输入；⌘⇧Z 重做。",
+              "选择画布后，⌘Z 撤销内容块、页面和布局操作。",
+              "需要明确撤销画布操作时，使用「笔记 → 撤销画布操作」。"
+            ],
+            "shortcuts": [
+              "⌘Z",
+              "⌘⇧Z",
+              "⌘⌥Z"
+            ],
+            "keywords": [],
+            "note": "多文件粘贴是一组操作。撤销插入会移除页面中的块，已归档的原文件保留，便于恢复。"
+          }
+        ]
+      },
+      {
+        "id": "clipboard",
+        "title": "剪贴板快速整理",
+        "symbol": "doc.on.clipboard",
+        "summary": "按鼠标位置放下内容，再由应用判断引用还是归档。",
+        "topics": [
+          {
+            "id": "clipboard.location",
+            "title": "在鼠标位置粘贴",
+            "summary": "主画布中的粘贴位置由鼠标指针决定。",
+            "steps": [
+              "先切换到要整理的笔记页面。",
+              "把鼠标放到希望出现内容的位置，按 ⌘V。",
+              "多个文件从这个位置依次排入，原有内容不会被自动挪走。"
+            ],
+            "shortcuts": [
+              "⌘V"
+            ],
+            "keywords": [],
+            "note": "指针离开画布时使用当前页最近的画布位置或可视区域作为落点。独立阅读器里的普通文字粘贴保持原编辑行为。"
+          },
+          {
+            "id": "clipboard.inside",
+            "title": "复制的是库内文件",
+            "summary": "能复用原路径时优先引用，减少等待。",
+            "steps": [
+              "在 Finder 复制资料库文件夹里的文件。",
+              "回到主画布粘贴。",
+              "应用直接建立原路径的引用，不再复制一份文件。"
+            ],
+            "shortcuts": [
+              "⌘C",
+              "⌘V"
+            ],
+            "keywords": [
+              "路径",
+              "索引",
+              "速度"
+            ],
+            "note": null
+          },
+          {
+            "id": "clipboard.outside",
+            "title": "复制的是库外文件",
+            "summary": "归档到当前页面对应的文件夹，资料可独立保存。",
+            "steps": [
+              "在 Finder 复制一个或多个外部文件，再到画布粘贴。",
+              "应用在后台复制到当前页面文件夹，按 PDF、图片、文档、数据等类型分类。",
+              "查看归档状态；同名文件自动编号，原位置的文件保留。"
+            ],
+            "shortcuts": [
+              "⌘V"
+            ],
+            "keywords": [],
+            "note": "文件夹和目录包不作为普通文件粘贴；通用文件卡片不承诺内嵌预览所有格式。"
+          },
+          {
+            "id": "clipboard.bytes",
+            "title": "复制的是截图、图片或 PDF 数据",
+            "summary": "即使剪贴板没有原文件路径，也能保存成新资料。",
+            "steps": [
+              "复制截图、图片，或复制提供 PDF 数据的内容。",
+              "在主画布粘贴，应用先保存为页面分类文件夹里的新文件。",
+              "归档后在鼠标位置生成资料块，可以继续移动和批注。"
+            ],
+            "shortcuts": [
+              "⌘V"
+            ],
+            "keywords": [
+              "无路径",
+              "剪贴板图片",
+              "PNG",
+              "TIFF"
+            ],
+            "note": null
+          },
+          {
+            "id": "clipboard.internal",
+            "title": "复制的是 Libere 内容块",
+            "summary": "保留内容样式、批注关联和可追踪的来源。",
+            "steps": [
+              "选择要复制的内容块，按 ⌘C。",
+              "切换页面，将鼠标放好后按 ⌘V。",
+              "从新块的来源入口回到原页面；引用文件继续使用原文件身份。"
+            ],
+            "shortcuts": [
+              "⌘C",
+              "⌘V"
+            ],
+            "keywords": [],
+            "note": "跨资料库整理时，先在 Finder 复制原文件，再粘贴到目标资料库。"
+          }
+        ]
+      },
+      {
+        "id": "storage",
+        "title": "保存与 iCloud",
+        "symbol": "externaldrive",
+        "summary": "知道资料放在哪里，也知道什么时候需要等待下载。",
+        "topics": [
+          {
+            "id": "storage.save",
+            "title": "自动保存与手动保存",
+            "summary": "文字、布局和批注会保存到当前资料库。",
+            "steps": [
+              "修改后查看界面的保存状态。",
+              "需要确认已落盘时按 ⌘S。",
+              "编辑原文件发生冲突时，按提示查看 Recoveries 中保留的修改稿。"
+            ],
+            "shortcuts": [
+              "⌘S"
+            ],
+            "keywords": [],
+            "note": null
+          },
+          {
+            "id": "storage.icloud",
+            "title": "iCloud Drive 文件",
+            "summary": "云端文件需要先下载到本机，才可阅读或编辑。",
+            "steps": [
+              "选择 iCloud Drive 内的文件夹作为资料库。",
+              "遇到云端占位资料，在卡片中点「下载文件」。",
+              "也可从资料库菜单选择「下载本页的 iCloud 文件」。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "打开资料库也可能等待索引下载。可在 Finder 为常用资料和重要索引选择“保留下载”。"
+          },
+          {
+            "id": "storage.cache",
+            "title": "释放闲置的本地下载",
+            "summary": "节省本机空间，同时保留 iCloud 中的原文件。",
+            "steps": [
+              "在「存储位置…」中查看 iCloud 文件设置。",
+              "可开启对已上传、7 天未查阅文件的自动释放。",
+              "需要手动处理时使用「释放本页未使用的本地下载」。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "正在使用、未上传、有冲突的文件以及资料库索引会受到保护；系统自身的 iCloud 存储优化另行管理。"
+          },
+          {
+            "id": "storage.move",
+            "title": "搬迁或备份整个资料库",
+            "summary": "完整迁移时需要带走资料库目录中的原文件。",
+            "steps": [
+              "先完成当前编辑并确认保存状态。",
+              "在 Finder 中复制或移动整个资料库文件夹到目标位置。",
+              "回到「存储位置…」选择新位置，确认页面和原文件均可打开。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "“导出索引与批注”只导出笔记结构和批注，不能替代整个资料库文件夹的备份。"
+          }
+        ]
+      },
+      {
+        "id": "agent",
+        "title": "接入 AI Agent",
+        "symbol": "sparkle.magnifyingglass",
+        "summary": "让外部 Agent 帮你检索、整理和记录，写入权限由你控制。",
+        "topics": [
+          {
+            "id": "agent.connect",
+            "title": "连接本机 Agent",
+            "summary": "通过应用提供的配置接入支持 MCP 或 HTTP 的客户端。",
+            "steps": [
+              "打开「笔记 → Agent 接入…」。",
+              "开启本机 Agent API，点「复制 MCP 配置」粘贴到对应客户端。",
+              "需要自定义对接时，可复制 HTTP 示例和地址。"
+            ],
+            "shortcuts": [
+              "MCP",
+              "HTTP"
+            ],
+            "keywords": [],
+            "note": "配置中的访问令牌用于授权本机客户端，不要公开分享。"
+          },
+          {
+            "id": "agent.write",
+            "title": "控制读取与写入",
+            "summary": "先决定 Agent 能否保存资料和改变排版。",
+            "steps": [
+              "只想查询时，关闭「允许 agent 保存资料与调整排版」。",
+              "需要整理时再开启写入，并说明目标页面、来源和希望保留的内容。",
+              "完成后检查结果，不满意的画布改动可用撤销恢复。"
+            ],
+            "shortcuts": [
+              "⌘Z"
+            ],
+            "keywords": [
+              "只读",
+              "权限"
+            ],
+            "note": null
+          },
+          {
+            "id": "agent.layout",
+            "title": "让 Agent 按规则整理",
+            "summary": "把整理要求交给 Agent，同时保护现有手写和批注。",
+            "steps": [
+              "在接入页复制「排版与操作规范」给客户端。",
+              "让 Agent 先读取当前页面，再追加说明、来源和资料索引。",
+              "需要重排时先查看方案，再提交布局；锁定和关联批注会受到保护。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "外部 Agent 的能力、连接方式和费用由其客户端决定。"
+          }
+        ]
+      },
+      {
+        "id": "recovery",
+        "title": "导出与回收站",
+        "symbol": "archivebox",
+        "summary": "保留可恢复的整理过程，区分页面记录和原文件。",
+        "topics": [
+          {
+            "id": "recovery.export",
+            "title": "导出索引与批注",
+            "summary": "把页面结构和批注保存为可重新导入的文件。",
+            "steps": [
+              "打开资料库菜单，选择「导出索引与批注」。",
+              "选择保存位置，保留生成的备份文件。",
+              "需要恢复这些记录时使用「导入索引与批注」。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "导出不包含库内原文件。完整备份请同时保存整个资料库文件夹。"
+          },
+          {
+            "id": "recovery.trash",
+            "title": "移入回收站与恢复",
+            "summary": "先暂时收起不需要的页面，保留恢复机会。",
+            "steps": [
+              "在侧栏右键页面，选择「移入回收站」。",
+              "含子页面时留意确认提示，整棵层级会一起处理。",
+              "打开回收站，在目标条目点「恢复」。"
+            ],
+            "shortcuts": [
+              "⌘⌫"
+            ],
+            "keywords": [],
+            "note": "页面移入回收站不等于删除磁盘上的原文件。"
+          },
+          {
+            "id": "recovery.purge",
+            "title": "永久清除页面记录",
+            "summary": "明确不再需要时，再移除回收站中的笔记记录。",
+            "steps": [
+              "进入回收站，选择目标页面的「永久清除」。",
+              "核对确认窗口列出的范围，再决定是否继续。",
+              "完成后回到普通页面继续工作。"
+            ],
+            "shortcuts": [],
+            "keywords": [],
+            "note": "永久清除会移除页面和批注记录，无法靠普通撤销恢复；已索引的原文件仍保留在磁盘上。"
+          }
+        ]
+      }
+    ]
   }
 }

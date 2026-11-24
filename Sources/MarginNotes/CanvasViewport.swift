@@ -88,6 +88,7 @@ import MarginCore
     private var magnificationMonitor: Any?
     private var deskMonitor: Any?
     private var pointerMonitor: Any?
+    private var lastCanvasPointerInWindow: NSPoint?
     var pointerInteraction: CanvasPointerInteraction? { didSet { updatePointerMonitor() } }
     var didClickDesk: (() -> Void)? { didSet { updateDeskMonitor() } }
     private var routedGesture = false
@@ -127,6 +128,7 @@ import MarginCore
         updateMagnificationMonitor()
         updateDeskMonitor()
         updatePointerMonitor()
+        if pointerInteraction != nil { window?.acceptsMouseMovedEvents = true }
     }
     @objc private func windowLostFocus(_ notification: Notification) {
         if notification.object as? NSWindow === window { pointerInteraction?.cancel() }
@@ -138,9 +140,11 @@ import MarginCore
             return
         }
         guard pointerMonitor == nil else { return }
-        pointerMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .keyDown, .scrollWheel]) { [weak self] event in
+        window?.acceptsMouseMovedEvents = true
+        pointerMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved, .leftMouseDown, .leftMouseDragged, .leftMouseUp, .rightMouseDown, .keyDown, .scrollWheel]) { [weak self] event in
             let handled = MainActor.assumeIsolated {
                 guard let self else { return false }
+                if event.type != .keyDown { self.rememberCanvasPointer(at: event.locationInWindow, in: event.window) }
                 if event.type == .scrollWheel {
                     return self.routeAttachmentScroll(at: event.locationInWindow, in: event.window,
                         delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas)
@@ -160,6 +164,28 @@ import MarginCore
             }
             return handled ? nil : event
         }
+    }
+    /// Use AppKit's native conversion so magnification, scrolling and a centered
+    /// page all resolve to the same paper coordinate. Menu paste falls back to
+    /// the last pointer position within this page, then its visible center.
+    func clipboardPoint(at point: NSPoint, in eventWindow: NSWindow?, allowingFallback: Bool = true) -> CGPoint? {
+        guard let window, eventWindow === window, pointerInteraction != nil,
+              !isHiddenOrHasHiddenAncestor, pageID != nil else { return nil }
+        func paperPoint(_ point: NSPoint) -> CGPoint? {
+            let clipPoint = contentView.convert(point, from: nil)
+            let local = paper.convert(point, from: nil)
+            guard local.x.isFinite, local.y.isFinite, contentView.bounds.contains(clipPoint), paper.bounds.contains(local) else { return nil }
+            return local
+        }
+        if let local = paperPoint(point) { lastCanvasPointerInWindow = point; return local }
+        guard allowingFallback else { return nil }
+        if let lastCanvasPointerInWindow, let local = paperPoint(lastCanvasPointerInWindow) { return local }
+        let visible = paper.bounds.intersection(paper.convert(contentView.bounds, from: contentView))
+        guard !visible.isNull, !visible.isEmpty else { return nil }
+        return CGPoint(x: visible.midX, y: visible.midY)
+    }
+    private func rememberCanvasPointer(at point: NSPoint, in eventWindow: NSWindow?) {
+        _ = clipboardPoint(at: point, in: eventWindow, allowingFallback: false)
     }
     /// Selection owns wheel routing throughout the page, independent of hover.
     @discardableResult func routeAttachmentScroll(at point: NSPoint, in eventWindow: NSWindow?, delta: CGSize, precise: Bool) -> Bool {
@@ -328,7 +354,7 @@ import MarginCore
     func update(pageID: UUID, size: CGSize, zoom: Double, fitting: Bool, content: AnyView) {
         defer { reportVisibleRect() }
         let changedPage = self.pageID != pageID
-        if changedPage { pointerInteraction?.cancel() }
+        if changedPage { pointerInteraction?.cancel(); lastCanvasPointerInWindow = nil }
         self.pageID = pageID
         let origin = contentView.bounds.origin
         if paper.frame.size != size {

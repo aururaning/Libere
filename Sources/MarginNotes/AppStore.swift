@@ -80,8 +80,10 @@ enum EditorTool: String, CaseIterable {
     private var folderOverviewCheckpointed = false
     private var finishingFolderOverview = false
     let repository: Repository
+    let isNewLibrary: Bool
     let directories: WorkspaceDirectories
     lazy var iCloudFiles = ICloudFiles(root: repository.root, preferences: preferences)
+    lazy var clipboardPastes = ClipboardPasteCoordinator(store: self)
     private var notebookSessions: [String: NotebookSession] = [:]
     private var textSessions: [String: TextFileSession] = [:]
     private var referenceStamps: [String: String] = [:]
@@ -154,6 +156,7 @@ enum EditorTool: String, CaseIterable {
         let directory = root ?? override ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("MarginNotes")
         let loaded = try prepared ?? Self.prepareStartup(root: directory, device: Self.deviceIdentifier())
         guard loaded.repository.root.standardizedFileURL == directory.standardizedFileURL else { throw StoreError.corrupt }
+        isNewLibrary = loaded.workspace == nil
         repository = loaded.repository
         directories = WorkspaceDirectories(repository: repository, index: loaded.directoryIndex)
         if let data = UserDefaults.standard.data(forKey: "MarginInkOptions"), let options = try? JSONDecoder().decode(InkOptions.self, from: data) { inkOptions = options }
@@ -348,7 +351,8 @@ enum EditorTool: String, CaseIterable {
         for note in previous.notes { if let i = next.notes.firstIndex(where: { $0.id == note.id }) { next.notes[i] = restoredVersion(note) } }
         do {
             let paths = Dictionary(previous.notes.flatMap(\.blocks).compactMap { block in block.relativeFilePath.map { (block.fileIdentity, $0) } }, uniquingKeysWith: { a, _ in a })
-            let changed = try persistHierarchy(next, restoringFilePaths: paths)
+            let directories = Dictionary(previous.notes.compactMap { note in note.managedDirectoryPath.map { (note.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            let changed = try persistHierarchy(next, restoringFilePaths: paths, restoringDirectoryPaths: directories)
             undoStack.removeLast()
             redoStack.append(HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection))
             saveHistory(); restoreSelection(previous.selection)
@@ -364,7 +368,8 @@ enum EditorTool: String, CaseIterable {
         for note in entry.notes { if let i = next.notes.firstIndex(where: { $0.id == note.id }) { next.notes[i] = restoredVersion(note) } }
         do {
             let paths = Dictionary(entry.notes.flatMap(\.blocks).compactMap { block in block.relativeFilePath.map { (block.fileIdentity, $0) } }, uniquingKeysWith: { a, _ in a })
-            let changed = try persistHierarchy(next, restoringFilePaths: paths)
+            let directories = Dictionary(entry.notes.compactMap { note in note.managedDirectoryPath.map { (note.id, $0) } }, uniquingKeysWith: { a, _ in a })
+            let changed = try persistHierarchy(next, restoringFilePaths: paths, restoringDirectoryPaths: directories)
             redoStack.removeLast()
             undoStack.append(HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection))
             saveHistory(); restoreSelection(entry.selection)
@@ -639,9 +644,11 @@ enum EditorTool: String, CaseIterable {
         } catch { message = error.localizedDescription; return false }
     }
     /// Stage renames, save their index, then retire the path-only recovery journal.
-    @discardableResult private func persistHierarchy(_ candidate: Workspace, restoringFilePaths: [UUID: String] = [:]) throws -> Set<UUID> {
+    @discardableResult private func persistHierarchy(_ candidate: Workspace, restoringFilePaths: [UUID: String] = [:],
+                                                    restoringDirectoryPaths: [UUID: String] = [:]) throws -> Set<UUID> {
         var next = candidate
-        let transaction = try FileHierarchyTransaction.plan(from: workspace, to: &next, root: repository.root, restoringFilePaths: restoringFilePaths)
+        let transaction = try FileHierarchyTransaction.plan(from: workspace, to: &next, root: repository.root,
+            restoringFilePaths: restoringFilePaths, restoringDirectoryPaths: restoringDirectoryPaths)
         let old = Dictionary(workspace.notes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var changed: Set<UUID> = []
         for i in next.notes.indices where old[next.notes[i].id] != next.notes[i] {
@@ -1019,7 +1026,7 @@ enum EditorTool: String, CaseIterable {
         select(catalog.rootID); expandedPages.insert(catalog.rootID); cloud?.enqueue()
     }
     /// Atomically add indexed pages; a single undo trashes only these new pages.
-    func commitIndexedPages(_ pages: [Note]) throws {
+    func commitIndexedPages(_ pages: [Note], directoryBindings: [UUID: String] = [:], selectInserted: Bool = true) throws {
         guard !pages.isEmpty else { return }
         finishBlockEditing()
         guard saveEditors() else { throw CocoaError(.fileWriteUnknown) }
@@ -1029,6 +1036,14 @@ enum EditorTool: String, CaseIterable {
         guard pages.allSatisfy({ $0.parentID == nil || validParents.contains($0.parentID!) }) else { throw StoreError.corrupt }
         var next = workspace, placeholders: [Note] = []
         let priorSelection = selection, batch = UUID()
+        for (id, path) in directoryBindings {
+            guard let index = next.notes.firstIndex(where: { $0.id == id && !$0.deleted }),
+                  ReferencePath.resolve(path, inside: repository.root) != nil else { throw FileIndexError.outsideLibrary }
+            if next.notes[index].managedDirectoryPath == nil {
+                placeholders.append(next.notes[index]); next.notes[index].managedDirectoryPath = path
+                next.notes[index].touch(device); next.pending.insert("page_" + id.uuidString)
+            }
+        }
         for var page in pages {
             for block in page.blocks {
                 if let path = block.relativeFilePath, ReferencePath.resolve(path, inside: repository.root) == nil { throw FileIndexError.outsideLibrary }
@@ -1040,7 +1055,7 @@ enum EditorTool: String, CaseIterable {
         try repository.save(next); saveTask?.cancel(); workspace = next
         undoStack.append(HistoryEntry(placeholders, selection: priorSelection)); undoStack = Array(undoStack.suffix(50))
         redoStack = []; saveHistory(); saveStatus = "已保存到本机"; cloud?.enqueue()
-        if let first = pages.first { select(first.id) }
+        if selectInserted, let first = pages.first { select(first.id) }
     }
 
     private static func welcome(_ device: String) -> Workspace {

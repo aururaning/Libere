@@ -26,10 +26,17 @@ import MarginCore
     @ViewState private var selectedTextID: UUID?
     private var destination: InkDestination { InkDestination(noteID: noteID, blockID: block.id, page: page) }
     private var annotations: AttachmentPageAnnotations { block.annotations(on: page) }
+    private var isGenericFile: Bool { block.kind == .file && AttachmentFormat(filename: block.assetName) == nil }
 
     var body: some View {
         GeometryReader { viewport in
-            if let error { ContentUnavailableView("暂时无法预览", systemImage: "doc.questionmark", description: Text(error)) }
+            if isGenericFile {
+                if let url = store.attachmentURL(for: block) {
+                    GenericFilePreview(url: url, filename: block.assetName)
+                        .simultaneousGesture(TapGesture().onEnded { if store.selection == noteID { store.selectBlock(block.id) } })
+                }
+                else { ContentUnavailableView("找不到文件索引", systemImage: "doc.questionmark") }
+            } else if let error { ContentUnavailableView("暂时无法预览", systemImage: "doc.questionmark", description: Text(error)) }
             else if pdfPage != nil || image != nil || html != nil {
                 let scale = max(0.001, (fitPage && block.kind == .pdf
                     ? min(viewport.size.width / paperSize.width, viewport.size.height / paperSize.height)
@@ -129,6 +136,7 @@ import MarginCore
     }
     private func load() async {
         pdfPage = nil; pdfDocument = nil; image = nil; html = nil; error = nil
+        guard !isGenericFile else { return }
         guard let url = store.attachmentURL(for: block) else { error = "附件不存在。"; return }
         guard FileManager.default.fileExists(atPath: url.path) else { error = "附件尚未下载，请联网后同步。"; return }
         if block.kind == .pdf {

@@ -25,9 +25,23 @@ private final class HTMLFixtureProtocol: URLProtocol {
         if CommandLine.arguments.contains("--content-selection-only") { _ = try await runContentSelectionNativeChecks(); return }
         if CommandLine.arguments.contains("--batch-only") { _ = try runCanvasBatchNativeChecks(); return }
         if CommandLine.arguments.contains("--reader-fixes-only") { _ = try await runInspectorReaderNativeChecks(); _ = try await runReaderReflowNativeChecks(); _ = try await runNotebookEditorIdentityNativeChecks(); return }
+        if CommandLine.arguments.contains("--clipboard-only") {
+            _ = try await runClipboardLinksNativeChecks()
+            _ = try await runPasteboardFileNativeChecks()
+            _ = try await runClipboardArchiveNativeChecks()
+            _ = try await runGenericFileNativeChecks()
+            return
+        }
+        if CommandLine.arguments.contains("--guide-only") {
+            _ = try runFeatureGuideNativeChecks()
+            _ = try await runGuideLifecycleNativeChecks()
+            return
+        }
         var checks = 0
         func check(_ result: @autoclosure () -> Bool, _ label: String) {
-            precondition(result(), label); checks += 1
+            let passed = result()
+            if !passed { FileHandle.standardError.write(Data(("FAILED native: " + label + "\n").utf8)) }
+            precondition(passed, label); checks += 1
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent("MarginNativeCheck-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -480,6 +494,8 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runCanvasHitNativeChecks()
         checks += try await runCanvasPointerNativeChecks()
         checks += try runShowcaseNativeChecks()
+        checks += try runFeatureGuideNativeChecks()
+        checks += try await runGuideLifecycleNativeChecks()
         checks += try await runAttachmentInteractionNativeChecks()
         checks += try await runPagingHitNativeChecks()
         checks += try runAttachmentPagingNativeChecks()
@@ -491,6 +507,9 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runContentSelectionNativeChecks()
         checks += try runCanvasBatchNativeChecks()
         checks += try await runClipboardLinksNativeChecks()
+        checks += try await runPasteboardFileNativeChecks()
+        checks += try await runClipboardArchiveNativeChecks()
+        checks += try await runGenericFileNativeChecks()
         checks += try await runPageManagementNativeChecks()
         checks += try await runReaderNotebookNativeChecks()
         checks += try await runInspectorReaderNativeChecks()

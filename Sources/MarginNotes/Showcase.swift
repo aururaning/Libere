@@ -3,6 +3,81 @@ import Foundation
 import MarginCore
 #endif
 
+/// Read-only help lives in the application bundle, never in the user's library.
+struct FeatureGuideCatalog: Decodable, Sendable {
+    struct Topic: Decodable, Identifiable, Sendable {
+        let id: String
+        let title: String
+        let summary: String
+        let steps: [String]
+        let shortcuts: [String]
+        let keywords: [String]
+        let note: String?
+        fileprivate var searchableText: String { ([title, summary] + steps + shortcuts + keywords + [note ?? ""]).joined(separator: " ") }
+    }
+    struct Section: Decodable, Identifiable, Sendable {
+        let id: String
+        let title: String
+        let symbol: String
+        let summary: String
+        var topics: [Topic]
+    }
+    private struct Envelope: Decodable { let guide: FeatureGuideCatalog }
+    let version: Int
+    let title: String
+    let subtitle: String
+    let sections: [Section]
+    var topicCount: Int { sections.reduce(0) { $0 + $1.topics.count } }
+
+    static func load() throws -> Self {
+        guard let url = AppBrand.resources.url(forResource: "Showcase", withExtension: "json") else { throw ShowcaseCatalog.ContentError.missing }
+        return try decode(Data(contentsOf: url))
+    }
+    static func decode(_ data: Data) throws -> Self {
+        let value = try JSONDecoder().decode(Envelope.self, from: data).guide
+        try value.validate(); return value
+    }
+    func validate() throws {
+        let topics = sections.flatMap(\.topics)
+        guard version == 1, !title.isEmpty, !subtitle.isEmpty, !sections.isEmpty,
+              Set(sections.map(\.id)).count == sections.count,
+              Set(topics.map(\.id)).count == topics.count,
+              sections.allSatisfy({ !$0.id.isEmpty && !$0.title.isEmpty && !$0.symbol.isEmpty && !$0.summary.isEmpty && !$0.topics.isEmpty }),
+              topics.allSatisfy({ !$0.id.isEmpty && !$0.title.isEmpty && !$0.summary.isEmpty && !$0.steps.isEmpty && $0.steps.allSatisfy { !$0.isEmpty } }) else {
+            throw ShowcaseCatalog.ContentError.invalid
+        }
+    }
+    func matchingSections(query: String) -> [Section] {
+        let terms = query.split(whereSeparator: \.isWhitespace).map { Self.fold(String($0)) }
+        guard !terms.isEmpty else { return sections }
+        return sections.compactMap { section in
+            var result = section
+            let context = section.title + " " + section.summary
+            result.topics = section.topics.filter { topic in
+                let haystack = Self.fold(context + " " + topic.searchableText)
+                return terms.allSatisfy(haystack.contains)
+            }
+            return result.topics.isEmpty ? nil : result
+        }
+    }
+    private static func fold(_ value: String) -> String {
+        value.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "zh_CN"))
+    }
+}
+
+enum GuidePresentation {
+    // Deliberately independent of app/guide version: replacing the application
+    // must never turn an ordinary upgrade into another first-run presentation.
+    static let automaticPresentationKey = "LibereFeatureGuideAutomaticPresentationConsumed"
+    static func consumeAutomaticPresentation(isNewLibrary: Bool, defaults: UserDefaults = .standard) -> Bool {
+        guard !defaults.bool(forKey: automaticPresentationKey) else { return false }
+        defaults.set(true, forKey: automaticPresentationKey)
+        // Existing libraries also consume the marker, without showing help or
+        // inserting any tutorial pages, including upgrades from older builds.
+        return isNewLibrary
+    }
+}
+
 struct ShowcaseCatalog: Decodable {
     struct Scenario: Decodable, Identifiable {
         let id: String

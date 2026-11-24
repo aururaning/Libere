@@ -71,8 +71,9 @@ import UniformTypeIdentifiers
           "Transparent and opaque PNG pixels survive native decoding")
     check(AttachmentFormat(filename: "透明.PNG") == .image && !AttachmentFormat.image.isTextEditable,
           "Uppercase image extensions resolve to a non-text attachment")
-    check(AttachmentFormat.importTypes.contains { $0.identifier == UTType.png.identifier }
-          && AttachmentFormat.importTypes.contains { $0.identifier == UTType.jpeg.identifier },
+    check([UTType.png, .jpeg].allSatisfy { imageType in
+              AttachmentFormat.importTypes.contains { imageType.conforms(to: $0) }
+          },
           "The actual file picker's allowed types include PNG and JPEG")
 
     let jpegURL = try write(raster(width: 80, height: 40), name: "rotated.jpg", type: .jpeg, orientation: 6)

@@ -36,6 +36,7 @@ struct NoteTree: Identifiable {
     @ObservedObject var store: AppStore
     var openStorage: () -> Void = {}
     var openAgent: () -> Void = {}
+    var openGuide: () -> Void = {}
     @Environment(\.scenePhase) private var phase
     @ViewState private var showingImporter = false
     @ViewState private var importingBackup = false
@@ -123,6 +124,8 @@ struct NoteTree: Identifiable {
                 store.saveEditors(); store.flush()
             }
         }
+        .background(LibraryClipboardScope(store: store).frame(width: 0, height: 0))
+        .overlay(alignment: .bottomTrailing) { ClipboardPasteStatusView(coordinator: store.clipboardPastes) }
         .onReceive(timer) { _ in if phase == .active { Task { await store.cloud?.refresh(); await store.maintainICloudFiles() } } }
         .task { await store.maintainICloudFiles() }
         .task { if UserDefaults.standard.bool(forKey: "MarginCloudEnabled") { store.enableCloud() } }
@@ -242,6 +245,7 @@ struct NoteTree: Identifiable {
                     .id(note.id).frame(height: 31)
             }
             Spacer()
+            Button(action: openGuide) { Image(systemName: "questionmark.circle") }.buttonStyle(.plain).help("功能教程")
             if !note.isFolder {
                 Button { inspector.toggle() } label: { Image(systemName: "sidebar.right") }.buttonStyle(.plain).help("画布与批注设置")
             }

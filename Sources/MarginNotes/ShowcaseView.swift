@@ -3,6 +3,174 @@ import SwiftUI
 import MarginCore
 #endif
 
+@MainActor struct FeatureGuideView: View {
+    @ObservedObject var store: AppStore
+    @Environment(\.dismiss) private var dismiss
+    @ViewState private var query = ""
+    @ViewState private var selectedSectionID: String? = "start"
+    private let loaded: Result<FeatureGuideCatalog, Error>
+
+    init(store: AppStore, catalog: FeatureGuideCatalog? = nil) {
+        self.store = store
+        loaded = catalog.map(Result.success) ?? Result { try FeatureGuideCatalog.load() }
+    }
+    var body: some View {
+        Group {
+            switch loaded {
+            case .success(let catalog): guide(catalog)
+            case .failure:
+                VStack(spacing: 18) {
+                    ContentUnavailableView("暂时无法读取功能教程", systemImage: "book.closed", description: Text("请确认正在使用完整的 Libere 应用。已有资料不受影响。"))
+                    Button("关闭") { dismiss() }.keyboardShortcut(.cancelAction)
+                }.padding(28)
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 640, idealWidth: 1080, minHeight: 540, idealHeight: 740)
+        #else
+        .frame(minHeight: 400)
+        #endif
+        .background(Palette.desk)
+    }
+    private func guide(_ catalog: FeatureGuideCatalog) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 22) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(catalog.title).font(.system(size: 28, weight: .bold))
+                    Text(catalog.subtitle).font(.system(size: 15)).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 12)
+                Button("完成") { dismiss() }.keyboardShortcut(.cancelAction).buttonStyle(.borderedProminent)
+            }.padding(.horizontal, 26).padding(.top, 24).padding(.bottom, 20)
+            HStack(spacing: 10) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("搜索功能、操作或快捷键", text: $query).textFieldStyle(.plain)
+                    .accessibilityIdentifier("feature-guide-search")
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                        .buttonStyle(.plain).accessibilityLabel("清除教程搜索")
+                }
+                Text("\(catalog.topicCount) 项功能").font(.system(size: 13)).foregroundStyle(.secondary)
+            }.padding(12).background(.background, in: RoundedRectangle(cornerRadius: 10)).padding(.horizontal, 26).padding(.bottom, 18)
+            Divider()
+            GeometryReader { geometry in
+                let matches = catalog.matchingSections(query: query)
+                if geometry.size.width >= 820 {
+                    HStack(spacing: 0) {
+                        navigation(matches, horizontal: false).frame(width: 220)
+                        Divider()
+                        articles(matches)
+                    }
+                } else {
+                    VStack(spacing: 0) {
+                        navigation(matches, horizontal: true)
+                        Divider()
+                        articles(matches)
+                    }
+                }
+            }
+            Divider()
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { footerContents }
+                VStack(alignment: .leading, spacing: 10) { footerContents }
+            }.padding(.horizontal, 26).padding(.vertical, 14)
+        }
+        .onChange(of: query) { _, value in selectedSectionID = value.isEmpty ? catalog.sections.first?.id : nil }
+        .accessibilityIdentifier("feature-guide")
+    }
+    @ViewBuilder private var footerContents: some View {
+                Text("从「笔记 → 功能教程」随时回来查阅。覆盖升级不会重复弹出。").font(.system(size: 13)).foregroundStyle(.secondary)
+                Button("打开示例场景") { store.openShowcase(); dismiss() }.buttonStyle(.bordered)
+    }
+    private func navigation(_ sections: [FeatureGuideCatalog.Section], horizontal: Bool) -> some View {
+        ScrollView(horizontal ? .horizontal : .vertical) {
+            if horizontal {
+                HStack(spacing: 8) { navigationItems(sections) }.padding(12)
+            } else {
+                VStack(alignment: .leading, spacing: 5) { navigationItems(sections) }.padding(14)
+            }
+        }.background(Palette.accent.opacity(0.035))
+    }
+    @ViewBuilder private func navigationItems(_ sections: [FeatureGuideCatalog.Section]) -> some View {
+        if !query.isEmpty {
+            navigationButton(id: nil, title: "全部搜索结果", symbol: "line.3.horizontal.decrease.circle", count: sections.reduce(0) { $0 + $1.topics.count })
+        }
+        ForEach(sections) { section in
+            navigationButton(id: section.id, title: section.title, symbol: section.symbol, count: section.topics.count)
+        }
+    }
+    private func navigationButton(id: String?, title: String, symbol: String, count: Int) -> some View {
+        Button { selectedSectionID = id } label: {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).frame(width: 20)
+                Text(title).font(.system(size: 14, weight: selectedSectionID == id ? .semibold : .regular))
+                Spacer(minLength: 12)
+                Text("\(count)").font(.system(size: 12)).monospacedDigit().foregroundStyle(.secondary)
+            }.padding(.horizontal, 12).padding(.vertical, 11)
+                .foregroundStyle(selectedSectionID == id ? Palette.accent : .primary)
+                .background(selectedSectionID == id ? Palette.accent.opacity(0.11) : .clear, in: RoundedRectangle(cornerRadius: 9))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityLabel("\(title)，\(count) 项功能")
+    }
+    private func articles(_ matches: [FeatureGuideCatalog.Section]) -> some View {
+        let visible = selectedSectionID.flatMap { id in matches.first { $0.id == id }.map { [$0] } } ?? matches
+        return ScrollViewReader { proxy in
+            ScrollView {
+                if visible.isEmpty {
+                    ContentUnavailableView.search(text: query).padding(.top, 70)
+                } else {
+                    VStack(alignment: .leading, spacing: 28) {
+                        Color.clear.frame(height: 0).id("feature-guide-top")
+                        ForEach(visible) { section in
+                            VStack(alignment: .leading, spacing: 18) {
+                                VStack(alignment: .leading, spacing: 9) {
+                                    Label(section.title, systemImage: section.symbol).font(.system(size: 25, weight: .semibold)).foregroundStyle(Palette.ink)
+                                    Text(section.summary).font(.system(size: 16)).foregroundStyle(.secondary)
+                                }
+                                ForEach(section.topics) { topic in FeatureGuideTopicCard(topic: topic) }
+                            }.id(section.id)
+                        }
+                    }.padding(.horizontal, 28).padding(.bottom, 28).frame(maxWidth: 850, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }.onChange(of: selectedSectionID) { _, _ in proxy.scrollTo("feature-guide-top", anchor: .top) }
+                .onChange(of: query) { _, _ in proxy.scrollTo("feature-guide-top", anchor: .top) }
+        }
+    }
+}
+
+@MainActor private struct FeatureGuideTopicCard: View {
+    let topic: FeatureGuideCatalog.Topic
+    var body: some View {
+        VStack(alignment: .leading, spacing: 13) {
+            HStack(alignment: .top, spacing: 14) {
+                Text(topic.title).font(.system(size: 19, weight: .semibold))
+                Spacer(minLength: 0)
+                if !topic.shortcuts.isEmpty {
+                    Text(topic.shortcuts.joined(separator: " · ")).font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Palette.accent).padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(Palette.accent.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
+            Text(topic.summary).font(.system(size: 16)).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 9) {
+                ForEach(Array(topic.steps.enumerated()), id: \.offset) { index, step in
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text("\(index + 1)").font(.system(size: 13, weight: .semibold, design: .monospaced)).foregroundStyle(Palette.accent).frame(width: 16)
+                        Text(step).font(.system(size: 15)).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }.textSelection(.enabled)
+            if let note = topic.note, !note.isEmpty {
+                Text(note).font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 4)
+            }
+        }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Palette.accent.opacity(0.09), lineWidth: 1))
+            .accessibilityElement(children: .contain)
+    }
+}
+
 @MainActor struct ShowcaseHome: View {
     @ObservedObject var store: AppStore
     let catalog: ShowcaseCatalog

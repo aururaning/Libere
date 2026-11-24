@@ -252,6 +252,7 @@ struct AnchorHitShape: Shape {
             }
             .contextMenu {
                 if let source = block.sourceURL, let url = WebLink.url(source) { Link("打开资料来源", destination: url) }
+                if block.reference != nil { Button("前往原位置") { store.revealReferenceSource(block) } }
                 Button(block.locked ? "解锁位置和大小" : "锁定位置和大小") { store.checkpoint(); store.editBlock(block.id) { $0.locked.toggle() } }
                 Button("添加文字批注") { store.addAnnotation(to: block.id) }
                 Button("自定批注点位置") { store.selectBlock(block.id); store.tool = .anchor }
@@ -263,7 +264,6 @@ struct AnchorHitShape: Shape {
                 }
                 if block.isFilePlugin {
                     Button("复制为引用") { store.selectBlock(block.id); store.copySelectedBlock() }
-                    if let source = block.reference { Button("前往来源页面") { store.select(source.noteID); store.selectBlock(source.blockID) } }
                 }
                 if block.kind.hasAttachment || block.kind == .link { Button(block.collapsed == true ? "展开内容" : "收起内容") { store.toggleCollapsed(block.id) } }
                 if block.kind == .link, let noteID = store.selection {
@@ -278,7 +278,9 @@ struct AnchorHitShape: Shape {
     private var selectableContents: some View {
         contents.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
-                        if store.tool == .select && !editing && block.kind != .link && store.interactingBlockID != block.id {
+                        if store.tool == .select && !editing && block.kind != .link
+                            && !(block.kind == .file && AttachmentFormat(filename: block.assetName) == nil)
+                            && store.interactingBlockID != block.id {
                             selectionSurface
                                 .padding(.top, block.kind == .text ? 30 : block.kind == .file && AttachmentFormat(filename: block.assetName) != .image ? 28 : 0)
                                 .padding(.bottom, block.kind == .pdf ? CanvasItemGeometry.pdfFooterHeight : 0)

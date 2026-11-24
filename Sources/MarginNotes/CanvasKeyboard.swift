@@ -1,5 +1,25 @@
 import SwiftUI
 #if os(macOS)
+@MainActor final class LibraryPasteOwnerView: NSView { weak var store: AppStore? }
+@MainActor struct LibraryClipboardScope: NSViewRepresentable {
+    let store: AppStore
+    func makeNSView(context: Context) -> LibraryPasteOwnerView { LibraryPasteOwnerView() }
+    func updateNSView(_ view: LibraryPasteOwnerView, context: Context) { view.store = store }
+}
+extension AppStore {
+    func canvasPastePoint(in window: NSWindow? = nil) -> CGPoint? {
+        guard let window = window ?? NSApp.keyWindow, let root = window.contentView else { return nil }
+        var pending = [root]
+        while let view = pending.popLast() {
+            if let canvas = view as? CanvasScrollView, canvas.pointerInteraction === canvasPointer,
+               !canvas.isHiddenOrHasHiddenAncestor {
+                return canvas.clipboardPoint(at: window.convertPoint(fromScreen: NSEvent.mouseLocation), in: window)
+            }
+            pending.append(contentsOf: view.subviews)
+        }
+        return nil
+    }
+}
 @MainActor final class CanvasKeyView: NSView {
     weak var store: AppStore?
     override var acceptsFirstResponder: Bool { true }
@@ -31,5 +51,7 @@ import SwiftUI
     }
 }
 #else
+extension AppStore { func canvasPastePoint() -> CGPoint? { nil } }
+struct LibraryClipboardScope: View { let store: AppStore; var body: some View { EmptyView() } }
 struct CanvasKeyboard: View { let store: AppStore; var body: some View { EmptyView() } }
 #endif

@@ -103,6 +103,7 @@ enum WorkspaceLocation {
     @Published var error: String?
     @Published var showingStorage = false
     @Published var showingAgent = false
+    @Published var showingGuide = false
     @Published var agent: AgentController?
     @Published private(set) var isLoading = false
     private var activeURL: URL?
@@ -110,11 +111,14 @@ enum WorkspaceLocation {
     private var openTask: Task<Void, Never>?
     private var requestID = UUID()
     private let loader: @Sendable (URL, String) async throws -> AppStore.StartupState
+    private let guideDefaults: UserDefaults
     init(restoreOnInit: Bool = true,
+         guideDefaults: UserDefaults = .standard,
          loader: @escaping @Sendable (URL, String) async throws -> AppStore.StartupState = { root, device in
              try await Task.detached(priority: .userInitiated) { try AppStore.prepareStartup(root: root, device: device) }.value
          }) {
         self.loader = loader
+        self.guideDefaults = guideDefaults
         guard restoreOnInit else { return }
         #if MARGIN_LOCAL_BUILD
         MacWindowCheck.beginStartup()
@@ -190,7 +194,13 @@ enum WorkspaceLocation {
             let windowFixture = (args.contains("--verify-window") && args.contains("--data-dir"))
                 || Bundle.main.object(forInfoDictionaryKey: "MarginWindowCheck") as? Bool == true
             if !windowFixture {
-                do { try next.installShowcaseIfNeeded() }
+                // Updating the app never seeds or restores tutorial pages in an
+                // existing library. Old, user-editable examples remain available.
+                do {
+                    if next.workspace.notes.contains(where: { $0.id == ShowcaseCatalog.rootPageID }) {
+                        next.showcaseCatalog = try ShowcaseCatalog.load()
+                    }
+                }
                 catch { next.message = error.localizedDescription }
             }
             agent?.stop()
@@ -199,6 +209,9 @@ enum WorkspaceLocation {
             store = next; error = nil; showingStorage = false
             agent = AgentController(store:next); agent?.resume()
             isLoading = false; openTask = nil
+            if !windowFixture {
+                showingGuide = GuidePresentation.consumeAutomaticPresentation(isNewLibrary: next.isNewLibrary, defaults: guideDefaults)
+            }
         } catch { failed(error, request: request) }
     }
     private func openError(_ message: String) -> NSError {

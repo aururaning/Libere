@@ -41,15 +41,21 @@ import MarginCore
         case .formula: selectBlock(id); formulaEditor = block
         case .pdf: selectBlock(id); openAttachment(block)
         case .file where AttachmentFormat(filename: block.assetName) == .image: selectBlock(id); openAttachment(block)
+        case .file where AttachmentFormat(filename: block.assetName) == nil: selectBlock(id); openAttachment(block)
         default: beginBlockEditing(id)
         }
     }
 
     func openAttachment(_ block: Block, page: Int? = nil, fullScreen: Bool = false) {
         guard let note, let current = note.blocks.first(where: { $0.id == block.id }),
-              attachmentURL(for: current) != nil else { return }
+              let url = attachmentURL(for: current) else { return }
         finishBlockEditing()
         #if os(macOS)
+        if current.kind == .file, AttachmentFormat(filename: current.assetName) == nil {
+            do { try iCloudFiles.requireLocal(url); NSWorkspace.shared.open(url) }
+            catch { message = error.localizedDescription }
+            return
+        }
         PDFWindow.shared.open(store: self, noteID: note.id, block: current, page: page, fullScreen: fullScreen)
         #else
         readerInitialPage = page; readerBlock = current

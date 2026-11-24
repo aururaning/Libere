@@ -79,7 +79,8 @@ public struct FileHierarchyTransaction: Codable {
         guard let move = moves.sorted(by: { $0.source.count > $1.source.count }).first(where: { path == $0.source || path.hasPrefix($0.source + "/") }) else { return path }
         return move.destination + path.dropFirst(move.source.count)
     }
-    public static func plan(from before: Workspace, to candidate: inout Workspace, root: URL, restoringFilePaths: [UUID: String] = [:]) throws -> Self {
+    public static func plan(from before: Workspace, to candidate: inout Workspace, root: URL,
+                            restoringFilePaths: [UUID: String] = [:], restoringDirectoryPaths: [UUID: String] = [:]) throws -> Self {
         let id = UUID(), lookup = Dictionary(before.notes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         var moves: [Move] = [], directories: Set<String> = []
         func add(_ source: String, _ destination: String) {
@@ -100,11 +101,43 @@ public struct FileHierarchyTransaction: Codable {
                 let filename = old.title == note.title ? (file as NSString).lastPathComponent
                     : (name as NSString).pathExtension.isEmpty && !ext.isEmpty ? name + "." + ext : name
                 add(file, joined(parent, filename))
+                // A file-backed page can also own a companion archive directory.
+                // Move both originals through the same transaction so global
+                // references, conflict checks, rollback and undo remain unified.
+                if let companion = old.managedDirectoryPath {
+                    let companionParent = old.parentID == note.parentID
+                        ? (companion as NSString).deletingLastPathComponent : directoryPath(for: note.parentID, in: candidate)
+                    let oldName = (companion as NSString).lastPathComponent
+                    let oldBase = WorkspaceDirectories.safeName(old.title) + "__" + note.id.uuidString.prefix(8)
+                    let suffix = oldName.hasPrefix(oldBase) ? String(oldName.dropFirst(oldBase.count)) : ""
+                    // Clipboard intake appends " (2)", " (3)", ... when an
+                    // unowned directory already occupies the generated name.
+                    // Keep that suffix through rename so its inverse is safe.
+                    let collisionSuffix = suffix.range(of: #"^ \([2-9][0-9]*\)$|^ \(1[0-9]+\)$"#, options: .regularExpression) != nil ? suffix : ""
+                    let companionName = old.title == note.title ? oldName
+                        : name + "__" + note.id.uuidString.prefix(8) + collisionSuffix
+                    var destination = joined(companionParent, companionName)
+                    if let prior = restoringDirectoryPaths[note.id] {
+                        destination = prior
+                    } else if !restoringFilePaths.isEmpty {
+                        // Historical file paths also recover nonstandard old
+                        // directory names without moving their files separately.
+                        let priorDirectories = Set(before.notes.flatMap(\.blocks).compactMap { block -> String? in
+                            guard let path = block.relativeFilePath, path.hasPrefix(companion + "/"),
+                                  let prior = restoringFilePaths[block.fileIdentity] else { return nil }
+                            let tail = String(path.dropFirst(companion.count))
+                            guard prior.hasSuffix(tail), prior.count > tail.count else { return nil }
+                            return String(prior.dropLast(tail.count))
+                        })
+                        if priorDirectories.count == 1, let prior = priorDirectories.first { destination = prior }
+                    }
+                    add(companion, destination)
+                }
             } else {
                 let parent = old.parentID == note.parentID && old.managedDirectoryPath != nil
                     ? (old.managedDirectoryPath! as NSString).deletingLastPathComponent : directoryPath(for: note.parentID, in: candidate)
                 let directoryName = old.title == note.title ? old.managedDirectoryPath.map { ($0 as NSString).lastPathComponent } ?? name : name
-                let target = joined(parent, directoryName)
+                let target = restoringDirectoryPaths[note.id] ?? joined(parent, directoryName)
                 if let source = old.managedDirectoryPath, FileManager.default.fileExists(atPath: root.appendingPathComponent(source).path) { add(source, target) }
                 else {
                     guard !FileManager.default.fileExists(atPath: root.appendingPathComponent(target).path) else {

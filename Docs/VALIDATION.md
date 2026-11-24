@@ -1,3 +1,7 @@
+# 当前验证：Libere 0.7.2（build 28）
+
+160项XCTest、1796项优化编译原生检查、18项桥接测试和三个Apple SDK构建通过。新增鼠标位置粘贴、归档/引用/来源跳转和教程首用策略；详见 [VALIDATION-0.7.2.md](VALIDATION-0.7.2.md)。下方保留之前版本的验证记录。
+
 # 验证记录 · Libere 0.7.1
 
 2026-11-24，Apple Silicon Mac，Xcode 27.2，build 27。

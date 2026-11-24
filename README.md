@@ -6,7 +6,7 @@
 
 **由 p 人打造的一款个人知识库管理软件！**
 
-[![Version](https://img.shields.io/badge/version-0.7.1-2657c7?style=flat-square)](https://github.com/aururaning/Libere/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.7.2-2657c7?style=flat-square)](https://github.com/aururaning/Libere/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS-14%2B%20(Apple%20Silicon)-111827?style=flat-square&logo=apple&logoColor=white)](https://github.com/aururaning/Libere/releases/latest)
 [![Built With](https://img.shields.io/badge/Swift-SwiftUI%20%2B%20AppKit-F05138?style=flat-square&logo=swift&logoColor=white)](#)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-4b5563?style=flat-square)](LICENSE)
@@ -19,7 +19,7 @@
 
 Libere 是一款面向 Mac 的自由画布笔记与知识库应用。支持 **PDF、Python 脚本、Jupyter Notebook、图片、HTML、网页链接和 Markdown（带离线公式）** 等各种格式——你可以把它们像便签和草稿纸一样在画布上任意排布、实时预览，还能直接在旁边做批注。
 
-和传统笔记软件把文件全塞进私有数据库不同，**Libere 直接使用你本地文件夹里的原文件**：软件里只记录路径索引，不额外拷贝副本；你在侧栏重命名、拖动整理文件夹，磁盘上的原文件也会跟着一起移动。换设备或备份时，直接带走你的资料库文件夹就行，永远不会被软件锁死格式。
+和传统笔记软件把文件全塞进私有数据库不同，**Libere 直接使用资料库里的原文件**：添加索引时只记录路径；粘贴库外文件或截图时，会一次性归档到当前页面文件夹并按类型分类，之后编辑直接使用归档原件，不创建工作镜像；你在侧栏重命名、拖动整理文件夹，磁盘上的原文件也会跟着一起移动。换设备或备份时，直接带走你的资料库文件夹就行，永远不会被软件锁死格式。
 
 ---
 
@@ -32,14 +32,15 @@ Libere 是一款面向 Mac 的自由画布笔记与知识库应用。支持 **PD
 | **代码开发** | 内置 Jupyter Notebook 执行环境与本地 Agent 接口，支持边写代码边让 Agent 帮你记录开发日志和整理目录。 |
 | **整理项目** | 按文件夹收集需求文档、参考网页、会议记录和下一步计划，把零散文件串成项目主页。 |
 
-> 软件内置了这四个场景的示例模板，首次打开就可以直接点开修改，快速上手整理成自己的笔记。
+> 软件内置了这四个场景的示例模板，从「笔记 → 示例场景」可手动打开修改。另有覆盖14组、56项功能的可搜索教程，覆盖升级不重复弹出或插入示例页面。
 
 ---
 
 ## 核心功能
 
 - **自由画布 + 多级批注分支**：文字框（Markdown / 离线 LaTeX 公式）、PDF、代码文件、图片、网页和手写笔迹都能混排在一张纸上；支持多选框选、对齐分布，以及从任意资料引出带连线的批注分支。
-- **原文件直连（不占双倍空间）**：目前支持本地文件夹与 **iCloud Drive**。先选好资料库文件夹，把文件放进去再点“添加文件索引”即可；还支持自动清理 7 天没打开过的 iCloud 本地缓存，替硬盘省空间。
+- **库内原件直连**：目前支持本地文件夹与 **iCloud Drive**。库内文件通过“添加文件索引”直接使用原件；外部文件可粘贴后一次性归档。支持安全释放已上传、闲置的 iCloud 本地下载。
+- **鼠标位置粘贴与分类归档**：复制一个或多个普通文件、截图或图片后，在画布上按 `⌘V`。库外内容按类型归档到当前页面文件夹，同名自动编号；应用内复制保留“前往原位置”入口。其他不能内嵌预览的格式以文件卡片显示，可用系统应用打开。
 - **代码、网页与 Notebook 直接可用**：Markdown、Python、HTML 支持直接编辑保存；Jupyter Notebook 可连接本机 Python 内核直接运行单元格并保存输出；网页链接支持卡片 / 离线 HTML / 内嵌浏览器三种模式切换。
 - **快速检索与双向跳转**：支持 `⌘K` 全文搜索页面、正文、公式、文件名、标签和页内批注；输入 `[[` 可快速插入页面引用，底部面板可查看标签与反向链接。
 - **兼容 Agent 联动**：可在菜单栏 `笔记 → Agent 接入…` 开启本地 HTTP / MCP 服务，让外部 AI Agent 帮你查笔记、建索引、做排版。
@@ -50,7 +51,7 @@ Libere 是一款面向 Mac 的自由画布笔记与知识库应用。支持 **PD
 
 - **系统要求**：**macOS 14 及以上**（当前安装包支持 **Apple Silicon / M 系列芯片**）
 - **下载安装**：前往 [Release 页面](https://github.com/aururaning/Libere/releases/latest) 下载最新的 `.pkg` 安装包安装即可。
-- **首次打开**：选择你用来存放笔记和资料的文件夹（本地目录或 iCloud Drive 均可）。如果后续想把文件放进笔记里，先放进这个文件夹，再在软件里通过拖拽或“添加文件索引”加入画布。
+- **首次打开**：选择你用来存放笔记和资料的文件夹（本地目录或 iCloud Drive 均可）。库内文件可通过拖拽或“添加文件索引”加入画布；库外文件和截图也可以直接粘贴，自动归档到当前页面文件夹。
 
 > **小提示**
 > 1. 安装包目前是个人自签名、尚未经过苹果公证，首次打开如遇系统拦截，在「系统设置 → 隐私与安全性」点击 **仍要打开** 即可。
@@ -60,9 +61,9 @@ Libere 是一款面向 Mac 的自由画布笔记与知识库应用。支持 **PD
 
 ## 最近更新
 
-最新版本为 **0.7.1**，刚刚解决了阅读窗口复用、代码放大折行和 Notebook 单格撤销等问题；**0.7.0** 版本新增了 `⌘K` 全局搜索、`[[` 双链、画布多选对齐、Finder 拖拽建索引和回收站清理等完整工作流。
+最新版本为 **0.7.2**，新增鼠标位置粘贴、自动分类归档、应用内来源索引和56项功能教程。**0.7.1** 解决了阅读窗口复用、代码放大折行和 Notebook 单格撤销等问题；**0.7.0** 版本新增了 `⌘K` 全局搜索、`[[` 双链、画布多选对齐、Finder 拖拽建索引和回收站清理等完整工作流。
 
-👉 查看完整版本变化：[CHANGELOG.md](CHANGELOG.md) · [0.7.1 更新说明](Docs/RELEASE-0.7.1.md) · [0.7.0 更新说明](Docs/RELEASE-0.7.0.md)
+👉 查看完整版本变化：[CHANGELOG.md](CHANGELOG.md) · [0.7.2 更新说明](Docs/RELEASE-0.7.2.md) · [0.7.1 更新说明](Docs/RELEASE-0.7.1.md) · [0.7.0 更新说明](Docs/RELEASE-0.7.0.md)
 
 ---
 

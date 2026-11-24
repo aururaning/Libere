@@ -7,10 +7,49 @@ import MarginCore
 
 extension AttachmentFormat {
     static var importTypes: [UTType] {
-        // System image identifiers remain available without filename registration
-        // lookups, including the first run in a restricted process.
-        [.pdf, .png, .jpeg, .heic, .heif, .gif, .tiff, .bmp, .webP]
-            + allCases.filter { $0 != .image }.flatMap(\.extensions).compactMap { UTType(filenameExtension: $0) }
+        // Eligibility is a regular-file/path policy, not a preview-format list.
+        // Directories remain rejected by FileIndexPolicy and file-picker options.
+        [.data]
+    }
+}
+
+struct GenericFileDescriptor: Equatable {
+    let filename: String
+    var kind: String {
+        let ext = (filename as NSString).pathExtension
+        return ext.isEmpty ? "文件" : ext.uppercased() + " 文件"
+    }
+}
+
+/// An index for an unsupported format never feeds its bytes to a text decoder or
+/// launches an application merely because its card became visible.
+@MainActor struct GenericFilePreview: View {
+    let url: URL
+    let filename: String
+    var openFile: ((URL) -> Void)? = nil
+    private var descriptor: GenericFileDescriptor { GenericFileDescriptor(filename: filename.isEmpty ? url.lastPathComponent : filename) }
+    var body: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "doc").font(.system(size: 34, weight: .light)).foregroundStyle(.secondary)
+            Text(descriptor.filename).font(.headline).lineLimit(3).multilineTextAlignment(.center)
+            Text(descriptor.kind).font(.caption).foregroundStyle(.secondary)
+            Text("此格式可通过系统应用打开。").font(.caption).foregroundStyle(.secondary)
+            #if os(macOS)
+            Button("打开原文件", action: openOriginal).buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("generic-file-open")
+            #else
+            ShareLink(item: url) { Label("用其他应用打开", systemImage: "square.and.arrow.up") }
+                .buttonStyle(.borderedProminent)
+            #endif
+        }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityIdentifier("generic-file-preview")
+    }
+    func openOriginal() {
+        guard url.isFileURL else { return }
+        if let openFile { openFile(url); return }
+        #if os(macOS)
+        NSWorkspace.shared.open(url)
+        #endif
     }
 }
 
@@ -21,7 +60,9 @@ extension AttachmentFormat {
     @ViewState private var imageResult: Result<AttachmentImage, Error>?
 
     var body: some View {
-        if !FileManager.default.fileExists(atPath: url.path) {
+        if AttachmentFormat(filename: filename) == nil {
+            GenericFilePreview(url: url, filename: filename)
+        } else if !FileManager.default.fileExists(atPath: url.path) {
             ContentUnavailableView("附件尚未下载", systemImage: "icloud.and.arrow.down")
         } else {
             Group {

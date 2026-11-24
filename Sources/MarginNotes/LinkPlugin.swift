@@ -11,10 +11,18 @@ extension AppStore {
         #else
         let value = UIPasteboard.general.string ?? ""
         #endif
-        insertLink(value, mode: mode)
+        insertLink(value, mode: mode, point: canvasPastePoint())
     }
-    func insertLink(_ value: String, mode: LinkDisplayMode) {
+    func insertLink(_ value: String, mode: LinkDisplayMode, point: CGPoint? = nil) {
         guard let url = WebLink.url(value) else { message = "请先复制一个 http 或 https 网页链接。"; return }
+        if let point {
+            var block = Block(.link, frame: Rect(0, 0, 380, 500))
+            block.assetName = url.host ?? "网页"; block.linkURL = url.absoluteString; block.linkMode = mode
+            do { guard try appendClipboardBlocks([block], at: point) else { return } }
+            catch { message = error.localizedDescription; return }
+            if mode == .html, let noteID = selection, let id = blockSelection { Task { await fetchHTML(noteID: noteID, blockID: id) } }
+            return
+        }
         insert(.link, name: url.host ?? "网页")
         guard let id = blockSelection, block?.kind == .link, let noteID = selection else { return }
         editBlock(id) { $0.linkURL = url.absoluteString; $0.linkMode = mode }
