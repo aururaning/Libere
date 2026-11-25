@@ -60,7 +60,7 @@ extension AppStore {
         merged.enforcePurges()
         merged.pending.formUnion(merged.notes.map { "page_" + $0.id.uuidString })
         merged.pending.formUnion(merged.purgedPageIDs.map { "page_" + $0.uuidString })
-        try repository.save(merged); workspace = merged; cloud?.enqueue()
+        try persistWorkspace(merged); workspace = merged; cloud?.enqueue()
         discardPurgedHistory(persist: true)
         if selection == nil || selection.map(merged.purgedPageIDs.contains) == true { selection = workspace.notes.first { !$0.deleted && !$0.isFolder }?.id }
         message = "索引与批注已合并。原文件按相对路径读取，请保留资料库文件夹及其文件。"

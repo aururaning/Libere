@@ -38,6 +38,16 @@ private final class HTMLFixtureProtocol: URLProtocol {
             _ = try await runGuideTipNativeChecks()
             return
         }
+        if CommandLine.arguments.contains("--build30-only") {
+            _ = try await runClipboardMoveNativeChecks()
+            _ = try await runTitleCanvasFocusNativeChecks()
+            _ = try await runBlockDeleteShortcutNativeChecks()
+            _ = try await runSidebarNestingNativeChecks()
+            _ = try await runPDFPreviewNativeChecks()
+            _ = try runSelectionScrollNativeChecks()
+            _ = try await runICloudFilesNativeChecks()
+            return
+        }
         var checks = 0
         func check(_ result: @autoclosure () -> Bool, _ label: String) {
             let passed = result()
@@ -289,7 +299,6 @@ private final class HTMLFixtureProtocol: URLProtocol {
         pdfContext.endPDFPage(); pdfContext.closePDF()
         let pdf = PDFDocument(data: pdfData as Data)!, pdfPage = pdf.page(at:0)!
         pdfPage.setBounds(CGRect(x:20,y:30,width:500,height:700), for:.cropBox)
-        let tileRenderer = PDFTileRenderer(); tileRenderer.setPage(pdfPage)
         var shapes: [(Int,Int)] = []
         for rotation in [0,90,180,270] {
             pdfPage.rotation = rotation; let size = PDFPageDrawing.size(of:pdfPage)
@@ -297,7 +306,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
             var pixels = [UInt8](repeating:255,count:w*h*4)
             pixels.withUnsafeMutableBytes { bytes in
                 let context = CGContext(data:bytes.baseAddress,width:w,height:h,bitsPerComponent:8,bytesPerRow:w*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)!
-                tileRenderer.draw(in:context,bounds:CGRect(x:0,y:0,width:w,height:h))
+                PDFPageDrawing.draw(pdfPage,in:context,bounds:CGRect(x:0,y:0,width:w,height:h))
             }
             var redCount = 0, minX=w, minY=h, maxX=0, maxY=0
             for i in stride(from:0,to:pixels.count,by:4) where pixels[i] > 220 && pixels[i+1] < 40 && pixels[i+2] < 40 {
@@ -308,15 +317,15 @@ private final class HTMLFixtureProtocol: URLProtocol {
             shapes.append((maxX-minX+1,maxY-minY+1))
         }
         check(shapes[0].0 == shapes[1].1 && shapes[0].1 == shapes[1].0, "PDF rotation swaps content dimensions exactly")
-        let tiledPDF = PDFVectorView(frame:NSRect(x:0,y:0,width:1200,height:1700))
-        tiledPDF.page = pdfPage; tiledPDF.refreshResolution()
-        check(tiledPDF.layer is PDFTileLayer, "PDF uses on-demand tiled backing instead of a full enlarged bitmap")
-        check((tiledPDF.layer as? PDFTileLayer)?.tileSize == CGSize(width:512,height:512)
-              && PDFTileLayer.fadeDuration() == 0, "PDF tiles have bounded allocations and no blurry fade transition")
-        let backingScale = tiledPDF.layer!.contentsScale
-        tiledPDF.resolutionScale = 6; tiledPDF.refreshResolution()
-        check(tiledPDF.layer!.contentsScale == backingScale && (tiledPDF.layer as! PDFTileLayer).levelsOfDetailBias >= 3,
-              "Native zoom selects tile detail without multiplying backing density a second time")
+        let nativePDF = SinglePagePDFView(frame:NSRect(x:0,y:0,width:700,height:500))
+        nativePDF.update(page:pdfPage)
+        check(nativePDF.document?.pageCount == 1 && nativePDF.displayedPage !== pdfPage,
+              "A native preview owns one lightweight page copy rather than a full-file bitmap or shared document")
+        check(pdfPage.document === pdf && nativePDF.displayedPage?.rotation == pdfPage.rotation,
+              "Creating a preview preserves the original page owner and its rotation")
+        nativePDF.scaleFactor = 6
+        check(nativePDF.scaleFactor == 1 && nativePDF.minScaleFactor == nativePDF.maxScaleFactor,
+              "PDFKit cannot apply an extra independent scale inside the canvas or reader")
         let notebookData = Data(##"{"nbformat":4,"metadata":{"kernelspec":{"name":"python3"}},"cells":[{"cell_type":"code","source":"a = 40\nprint('Swift桥接')\na + 2","outputs":[],"execution_count":null,"metadata":{}}]}"##.utf8)
         var savedNotebook: Data?
         let bridge = URL(fileURLWithPath:FileManager.default.currentDirectoryPath).appendingPathComponent("Sources/MarginNotes/Resources/notebook_kernel.py")
@@ -511,6 +520,11 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runClipboardLinksNativeChecks()
         checks += try await runPasteboardFileNativeChecks()
         checks += try await runClipboardArchiveNativeChecks()
+        checks += try await runClipboardMoveNativeChecks()
+        checks += try await runTitleCanvasFocusNativeChecks()
+        checks += try await runBlockDeleteShortcutNativeChecks()
+        checks += try await runSidebarNestingNativeChecks()
+        checks += try await runPDFPreviewNativeChecks()
         checks += try await runGenericFileNativeChecks()
         checks += try await runPageManagementNativeChecks()
         checks += try await runReaderNotebookNativeChecks()

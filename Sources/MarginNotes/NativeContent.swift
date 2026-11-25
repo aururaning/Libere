@@ -6,6 +6,63 @@ import PencilKit
 import MarginCore
 #endif
 
+#if os(macOS)
+@MainActor final class CanvasInlineButtonControl: NSButton {
+    var ownerBlockID: UUID?
+    var invoke: () -> Void = {}
+    // NSButton's bezel alignment insets otherwise expand a nominal 28×36 hit
+    // view outside the clipped block header (especially at fractional zoom).
+    override var alignmentRectInsets: NSEdgeInsets { NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0) }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHiddenOrHasHiddenAncestor, bounds.contains(convert(point, from: superview)) else { return nil }
+        return self
+    }
+    @objc func performInlineAction(_ sender: Any?) { if isEnabled { invoke() } }
+}
+@MainActor struct CanvasInlineButton: NSViewRepresentable {
+    var title = ""
+    var symbol: String? = nil
+    let label: String
+    let identifier: String
+    var ownerBlockID: UUID? = nil
+    var enabled = true
+    let action: () -> Void
+    func makeNSView(context: Context) -> CanvasInlineButtonControl {
+        let button = CanvasInlineButtonControl(frame: .zero)
+        button.setButtonType(.momentaryPushIn); button.isBordered = false
+        button.font = .systemFont(ofSize: 11); button.imagePosition = .imageOnly
+        button.target = button; button.action = #selector(CanvasInlineButtonControl.performInlineAction(_:))
+        return button
+    }
+    func updateNSView(_ button: CanvasInlineButtonControl, context: Context) {
+        button.title = title; button.ownerBlockID = ownerBlockID
+        button.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: label) }
+        button.imagePosition = symbol == nil ? .noImage : .imageOnly
+        button.imageScaling = .scaleNone
+        button.isEnabled = enabled && context.environment.isEnabled
+        button.invoke = action; button.toolTip = label
+        button.setAccessibilityLabel(label); button.setAccessibilityIdentifier(identifier)
+    }
+}
+#else
+@MainActor struct CanvasInlineButton: View {
+    var title = ""
+    var symbol: String? = nil
+    let label: String
+    let identifier: String
+    var ownerBlockID: UUID? = nil
+    var enabled = true
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Group { if let symbol { Image(systemName: symbol) } else { Text(title).font(.caption2) } }
+                .frame(maxWidth: .infinity, maxHeight: .infinity).contentShape(Rectangle())
+        }.buttonStyle(.plain).disabled(!enabled).accessibilityLabel(label).accessibilityIdentifier(identifier)
+    }
+}
+#endif
+
 @MainActor struct MathPreview: View {
     let source: String
     var size: Double = 24
@@ -52,33 +109,7 @@ final class HTMLState { var html = "" }
 }
 #endif
 
-@MainActor final class PDFState {
-    var url: URL?
-    func update(_ view: PDFView, url: URL, index: Int, full: Bool) {
-        if self.url != url {
-            self.url = url; view.document = PDFDocument(url: url)
-            view.displayMode = full ? .singlePageContinuous : .singlePage; view.displayDirection = .vertical
-            view.displaysPageBreaks = false; view.autoScales = true; view.backgroundColor = .white
-        }
-        if !full, let document = view.document, document.pageCount > 0,
-           let page = document.page(at: min(max(0, index), document.pageCount - 1)), view.currentPage !== page { view.go(to: page) }
-        if !full { view.autoScales = true }
-    }
-}
-@MainActor struct PDFPreview: View {
-    let url: URL; let index: Int; var full = false
-    var body: some View {
-        if FileManager.default.fileExists(atPath: url.path) { PDFNativeView(url: url, index: index, full: full) }
-        else { ContentUnavailableView("附件尚未下载", systemImage: "icloud.and.arrow.down", description: Text("联网后点击同步。")) }
-    }
-}
 #if os(macOS)
-@MainActor struct PDFNativeView: NSViewRepresentable {
-    let url: URL; let index: Int; let full: Bool
-    func makeCoordinator() -> PDFState { PDFState() }
-    func makeNSView(context: Context) -> PDFView { PDFView() }
-    func updateNSView(_ view: PDFView, context: Context) { context.coordinator.update(view, url: url, index: index, full: full) }
-}
 @MainActor final class PDFWindow: NSObject, NSWindowDelegate {
     static let shared = PDFWindow()
     private struct Key: Hashable { let store: ObjectIdentifier; let note: UUID; let block: UUID }
@@ -89,6 +120,37 @@ final class HTMLState { var html = "" }
     var presentsWindows = true
     func existingWindow(store: AppStore, noteID: UUID, blockID: UUID) -> NSWindow? {
         readers[Key(store: ObjectIdentifier(store), note: noteID, block: blockID)]?.window
+    }
+    /// Commit every window-owned input before a block move changes note IDs.
+    /// This includes the field editor in a non-key reader, without closing it.
+    func prepareReaders(store: AppStore) -> Bool {
+        for (key, entry) in readers where key.store == ObjectIdentifier(store) {
+            guard windowShouldClose(entry.window) else { return false }
+        }
+        return true
+    }
+    /// A moved block keeps its reader window and navigation object. Only the
+    /// document binding is replaced; no canvas or shared PDF scale is changed.
+    func reconcileReaders(store: AppStore) {
+        for (key, entry) in Array(readers) where key.store == ObjectIdentifier(store) {
+            guard readers[key]?.window === entry.window else { continue }
+            if let note = store.workspace.notes.first(where: { $0.id == key.note && !$0.deleted }),
+               let block = note.blocks.first(where: { $0.id == key.block }) {
+                entry.window.title = block.assetName
+                continue
+            }
+            guard let note = store.workspace.notes.first(where: { !$0.deleted && $0.blocks.contains(where: { $0.id == key.block }) }),
+                  let block = note.blocks.first(where: { $0.id == key.block }) else {
+                entry.window.close(); continue
+            }
+            let moved = Key(store: key.store, note: note.id, block: key.block)
+            if let duplicate = readers[moved], duplicate.window !== entry.window { duplicate.window.close() }
+            readers.removeValue(forKey: key); readers[moved] = entry
+            if enteringFullScreen.remove(key) != nil { enteringFullScreen.insert(moved) }
+            entry.window.title = block.assetName
+            entry.window.contentView = NSHostingView(rootView: AttachmentReader(store: store, noteID: note.id, block: block,
+                navigation: entry.navigation, onClose: { [weak window = entry.window] in window?.close() }))
+        }
     }
     func open(store: AppStore, noteID: UUID, block: Block, page: Int? = nil, fullScreen: Bool = false) {
         let key = Key(store: ObjectIdentifier(store), note: noteID, block: block.id)
@@ -149,13 +211,6 @@ final class HTMLState { var html = "" }
     }
 }
 
-#else
-@MainActor struct PDFNativeView: UIViewRepresentable {
-    let url: URL; let index: Int; let full: Bool
-    func makeCoordinator() -> PDFState { PDFState() }
-    func makeUIView(context: Context) -> PDFView { PDFView() }
-    func updateUIView(_ view: PDFView, context: Context) { context.coordinator.update(view, url: url, index: index, full: full) }
-}
 #endif
 
 #if os(iOS)

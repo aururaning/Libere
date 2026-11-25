@@ -41,24 +41,20 @@ import MarginCore
                 let scale = max(0.001, (fitPage && block.kind == .pdf
                     ? min(viewport.size.width / paperSize.width, viewport.size.height / paperSize.height)
                     : viewport.size.width / paperSize.width))
+                let documentScale = scale * (zoomChanged == nil ? 1 : ReaderDocumentLayout.scale(zoom))
                 if let zoomChanged {
                     CanvasViewport(pageID: block.id,
-                                   size: CGSize(width: paperSize.width * scale, height: paperSize.height * scale),
-                                   zoom: zoom, fitting: false, didZoom: zoomChanged,
-                                   content: AnyView(document(scale: scale, magnification: zoom)),
-                                   routesMagnification: true, didClickDesk: clearTextSelection)
+                                   size: paperSize,
+                                   zoom: Double(documentScale), fitting: false, didZoom: { zoomChanged($0 / Double(scale)) },
+                                   content: AnyView(document(scale: documentScale)),
+                                   routesMagnification: true, didClickDesk: clearTextSelection,
+                                   minimumZoom: Double(min(0.25, scale * 0.25)), maximumZoom: Double(max(6, scale * 6)))
                 } else {
-                    #if os(macOS)
                     CanvasViewport(pageID: block.id,
-                                   size: CGSize(width: paperSize.width * scale, height: paperSize.height * scale),
-                                   zoom: 1, fitting: false, didZoom: { _ in },
-                                   content: AnyView(document(scale: scale, magnification: 1)), attachmentBlockID: block.id)
-                    #else
-                    ScrollView([.horizontal, .vertical]) {
-                        document(scale: scale, magnification: 1)
-                            .frame(minWidth: viewport.size.width, minHeight: viewport.size.height, alignment: .top)
-                    }
-                    #endif
+                                   size: paperSize,
+                                   zoom: Double(scale), fitting: false, didZoom: { _ in },
+                                   content: AnyView(document(scale: scale)), attachmentBlockID: block.id,
+                                   minimumZoom: Double(min(0.25, scale)), maximumZoom: Double(max(6, scale)))
                 }
             } else { ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity) }
         }
@@ -70,28 +66,27 @@ import MarginCore
         .onChange(of: destination) { _, _ in selectedTextID = nil }
         .task(id: "\(block.attachmentContentIdentity)-\(page)") { await load() }
     }
-    private func document(scale: CGFloat, magnification: Double) -> some View {
+    private func document(scale: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
             if let pdfPage {
-                VectorPDFPage(page: pdfPage, resolutionScale: resolutionScale * magnification)
-                    .frame(width: paperSize.width * scale, height: paperSize.height * scale)
-                    .allowsHitTesting(false)
+                SelectablePDFPage(page: pdfPage)
+                    .frame(width: paperSize.width, height: paperSize.height)
+                    .allowsHitTesting(!inkEnabled && !textEnabled)
             }
             if let image {
                 Image(decorative: image.image, scale: 1)
                     .resizable().interpolation(.high)
-                    .frame(width: paperSize.width * scale, height: paperSize.height * scale)
+                    .frame(width: paperSize.width, height: paperSize.height)
                     .allowsHitTesting(false)
                     .accessibilityLabel(block.assetName)
             }
-            paper(scale: scale * magnification)
-                .environment(\.canvasRenderScale, outerRenderScale * scale * magnification)
+            paper(scale: scale)
+                .environment(\.canvasRenderScale, outerRenderScale * scale)
                 .frame(width: paperSize.width, height: paperSize.height)
                 .coordinateSpace(name: "attachment-\(destination)")
                 .clipped()
-                .scaleEffect(scale, anchor: .topLeading)
-                .frame(width: paperSize.width * scale, height: paperSize.height * scale, alignment: .topLeading)
-        }.frame(width: paperSize.width * scale, height: paperSize.height * scale, alignment: .topLeading)
+                .allowsHitTesting(html != nil || inkEnabled || textEnabled)
+        }.frame(width: paperSize.width, height: paperSize.height, alignment: .topLeading)
     }
     private func paper(scale: CGFloat) -> some View {
         ZStack(alignment: .topLeading) {
@@ -225,8 +220,10 @@ import MarginCore
                     .allowsHitTesting(false)
             }
             if active {
-                Button(source ? "预览" : "编辑") { source.toggle() }.buttonStyle(.plain).font(.caption2)
-                    .padding(4).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
+                CanvasInlineButton(title: source ? "预览" : "编辑", label: source ? "预览批注" : "编辑批注",
+                                   identifier: "annotation-edit-" + annotation.id.uuidString, ownerBlockID: destination.blockID) { source.toggle() }
+                    .frame(width: 52, height: 26)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 4))
             }
         }.frame(width: width, height: height).contentShape(Rectangle())
             .background(Palette.tint("blue").opacity(0.96), in: RoundedRectangle(cornerRadius: 8))

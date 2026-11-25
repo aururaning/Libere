@@ -47,6 +47,7 @@ import MarginCore
     @Published private(set) var preview: Preview?
     var isPressed: Bool { press != nil }
     var editingBlockID: UUID? { store?.editingBlockID }
+    var selectedBlockID: UUID? { store?.blockSelection }
     var pressedBlockID: UUID? { press?.blockID }
     var selectedScrollBlockID: UUID? {
         guard let store, let block = store.block, block.collapsed != true, block.kind != .formula,
@@ -68,12 +69,20 @@ import MarginCore
     func openMarkdownLink(at point: CGPoint, in window: NSWindow?) -> Bool { store?.openMarkdownLink(at: point, in: window) ?? false }
     #endif
 
-    @discardableResult func down(at point: CGPoint, area: Area, clickCount: Int, scale: Double, extendingSelection: Bool = false) -> Bool {
+    @discardableResult func down(at point: CGPoint, area: Area, clickCount: Int, scale: Double, extendingSelection: Bool = false,
+                                renderedControl: CanvasHitTarget? = nil) -> Bool {
         cancel()
         guard let store, let note = store.note, store.tool == .select || store.tool == .text,
-              scale.isFinite, scale > 0 else { return false }
-        // Resolve against the pre-selection geometry, once, in native paper coordinates.
-        let target = store.canvasHit(at: point)
+              scale.isFinite, scale > 0, point.x.isFinite, point.y.isFinite else { return false }
+        // Native control bounds are the authoritative owner of a visible drag
+        // handle. Do not reinterpret that verified hit as blank paper after zoom.
+        let target: CanvasHitTarget
+        if let renderedControl {
+            let id: UUID
+            switch renderedControl { case .move(let value), .resize(let value): id = value; default: return false }
+            guard store.blockSelection == id, note.blocks.contains(where: { $0.id == id }) else { return false }
+            target = renderedControl
+        } else { target = store.canvasHit(at: point) }
         guard area.accepts(target) else { lastClick = nil; return false }
         if extendingSelection, case .block(let id) = target { store.multiSelection.toggle(id); lastClick = nil; return true }
         let groupMove: Bool

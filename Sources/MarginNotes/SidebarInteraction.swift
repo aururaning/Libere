@@ -32,29 +32,71 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
 }
 
 @MainActor struct PageDropDelegate: DropDelegate {
+    static let supportedTypes: [UTType] = [.liberePage, .fileURL]
     let store: AppStore
     let target: UUID?
     let height: CGFloat
-    func placement(_ info: DropInfo) -> PagePlacement {
+    func placement(at point: CGPoint) -> PagePlacement {
         guard let target else { return .inside(nil) }
-        if info.location.y < height * 0.25 { return .before(target) }
-        if info.location.y > height * 0.75 { return .after(target) }
+        let rowHeight = height.isFinite && height > 0 ? height : 28
+        let edge = min(7, rowHeight * 0.25)
+        if point.y < edge { return .before(target) }
+        if point.y > rowHeight - edge { return .after(target) }
         return .inside(target)
     }
-    func validateDrop(info: DropInfo) -> Bool {
-        guard info.hasItemsConforming(to:[.liberePage]), let id = store.draggingPageID else { return false }
-        return store.workspace.canPlace(id,at:placement(info))
+    private func isPageDrop(_ providers: [NSItemProvider]) -> Bool {
+        providers.contains { $0.hasItemConformingToTypeIdentifier(UTType.liberePage.identifier) }
     }
-    func dropEntered(info: DropInfo) { update(info) }
-    func dropUpdated(info: DropInfo) -> DropProposal? {
-        update(info); return DropProposal(operation:validateDrop(info:info) ? .move : .forbidden)
+    private func fileProviders(_ providers: [NSItemProvider]) -> [NSItemProvider] {
+        providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
     }
-    func dropExited(info: DropInfo) { store.pageDropPlacement = nil }
-    func update(_ info: DropInfo) { store.pageDropPlacement = validateDrop(info:info) ? placement(info) : nil }
-    func performDrop(info: DropInfo) -> Bool {
+    func accepts(_ providers: [NSItemProvider], at point: CGPoint) -> Bool {
+        guard point.x.isFinite, point.y.isFinite else { return false }
+        if isPageDrop(providers) {
+            guard let id = store.draggingPageID else { return false }
+            return store.workspace.canPlace(id, at: placement(at: point))
+        }
+        guard let target, store.workspace.notes.contains(where: { $0.id == target && !$0.deleted }) else { return false }
+        return !fileProviders(providers).isEmpty
+    }
+    func update(_ providers: [NSItemProvider], at point: CGPoint) {
+        var next: PagePlacement?
+        if accepts(providers, at: point) { next = isPageDrop(providers) ? placement(at: point) : .inside(target) }
+        if store.pageDropPlacement != next { store.pageDropPlacement = next }
+    }
+    /// Both payloads share one native row destination. A nested file-only drop
+    /// receiver must not consume the row center before page nesting sees it.
+    @discardableResult func perform(_ providers: [NSItemProvider], at point: CGPoint) -> Bool {
         defer { store.draggingPageID = nil; store.pageDropPlacement = nil }
-        guard validateDrop(info:info), let id = store.draggingPageID else { return false }
-        return store.placePage(id,at:placement(info))
+        guard accepts(providers, at: point) else { return false }
+        if isPageDrop(providers), let id = store.draggingPageID {
+            return store.placePage(id, at: placement(at: point))
+        }
+        guard let target else { return false }
+        return store.indexDroppedFiles(providers: fileProviders(providers), noteID: target)
+    }
+    func clearOwnHighlight() {
+        guard let placement = store.pageDropPlacement else { return }
+        let owns: Bool
+        switch placement {
+        case .inside(let id): owns = id == target
+        case .before(let id), .after(let id): owns = id == target
+        }
+        if owns { store.pageDropPlacement = nil }
+    }
+    func validateDrop(info: DropInfo) -> Bool {
+        accepts(info.itemProviders(for: Self.supportedTypes), at: info.location)
+    }
+    func dropEntered(info: DropInfo) { update(info.itemProviders(for: Self.supportedTypes), at: info.location) }
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        let providers = info.itemProviders(for: Self.supportedTypes)
+        update(providers, at: info.location)
+        guard accepts(providers, at: info.location) else { return DropProposal(operation: .forbidden) }
+        return DropProposal(operation: isPageDrop(providers) ? .move : .copy)
+    }
+    func dropExited(info: DropInfo) { clearOwnHighlight() }
+    func performDrop(info: DropInfo) -> Bool {
+        perform(info.itemProviders(for: Self.supportedTypes), at: info.location)
     }
 }
 
@@ -72,6 +114,13 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
             .background(store.pageDropPlacement == .inside(note.id) ? Palette.accent.opacity(0.13) : Color.clear,in:RoundedRectangle(cornerRadius:6))
             .overlay(alignment:.top) { if store.pageDropPlacement == .before(note.id) { Rectangle().fill(Palette.accent).frame(height:2).allowsHitTesting(false) } }
             .overlay(alignment:.bottom) { if store.pageDropPlacement == .after(note.id) { Rectangle().fill(Palette.accent).frame(height:2).allowsHitTesting(false) } }
+            .overlay(alignment:.trailing) {
+                if note.isFolder, store.pageDropPlacement == .inside(note.id) {
+                    Text("放入文件夹").font(.system(size:11,weight:.semibold)).foregroundStyle(Palette.accent)
+                        .padding(.horizontal,7).padding(.vertical,3).background(.regularMaterial,in:Capsule())
+                        .padding(.trailing,4).allowsHitTesting(false)
+                }
+            }
             .onDrag {
                 guard store.renaming == nil else { return NSItemProvider() }
                 store.draggingPageID = note.id; store.pageDropPlacement = nil
@@ -81,7 +130,7 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
                 }
                 return provider
             }
-            .onDrop(of:[.liberePage],delegate:PageDropDelegate(store:store,target:note.id,height:height))
+            .onDrop(of:PageDropDelegate.supportedTypes,delegate:PageDropDelegate(store:store,target:note.id,height:height))
     }
 }
 

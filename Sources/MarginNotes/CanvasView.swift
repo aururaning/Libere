@@ -278,13 +278,16 @@ struct AnchorHitShape: Shape {
     private var selectableContents: some View {
         contents.frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay {
-                        if store.tool == .select && !editing && block.kind != .link
+                        if store.tool == .select && !editing && block.kind != .link && block.kind != .pdf
                             && !(block.kind == .file && AttachmentFormat(filename: block.assetName) == nil)
                             && store.interactingBlockID != block.id {
                             selectionSurface
                                 .padding(.top, block.kind == .text ? 30 : block.kind == .file && AttachmentFormat(filename: block.assetName) != .image ? 28 : 0)
                                 .padding(.bottom, block.kind == .pdf ? CanvasItemGeometry.pdfFooterHeight : 0)
                         }
+                    }
+                    .background {
+                        if block.kind == .pdf { InlineInteractionSelection(store: store, blockID: block.id).frame(width: 0, height: 0) }
                     }
     }
     private var header: some View {
@@ -305,9 +308,16 @@ struct AnchorHitShape: Shape {
                 .gesture(moveGesture).simultaneousGesture(selectionTap)
                 #endif
             if block.kind.hasAttachment || block.kind == .link {
-                Button { store.toggleCollapsed(block.id) } label: { Image(systemName: block.collapsed == true ? "chevron.down" : "chevron.up") }.buttonStyle(.plain).disabled(block.locked).help(block.collapsed == true ? "展开预览" : "收起为标题")
+                CanvasInlineButton(symbol: block.collapsed == true ? "chevron.down" : "chevron.up",
+                    label: block.collapsed == true ? "展开预览" : "收起为标题", identifier: "block-collapse-" + block.id.uuidString,
+                    ownerBlockID: block.id, enabled: !block.locked) { store.toggleCollapsed(block.id) }
+                    .frame(width: 28, height: Block.collapsedHeight)
             }
-            if selected && block.kind.hasAttachment { Button(action: openAttachment) { Image(systemName: "arrow.up.left.and.arrow.down.right") }.buttonStyle(.plain).help("打开阅读器") }
+            if selected && block.kind.hasAttachment {
+                CanvasInlineButton(symbol: "arrow.up.left.and.arrow.down.right", label: "打开阅读器",
+                    identifier: "block-reader-" + block.id.uuidString, ownerBlockID: block.id, action: openAttachment)
+                    .frame(width: 28, height: Block.collapsedHeight)
+            }
             if selected && block.kind == .formula { Button { store.formulaEditor = block } label: { Image(systemName: "pencil") }.buttonStyle(.plain) }
         }.foregroundStyle(selected ? Palette.accent : Color.secondary).padding(.horizontal, 8).frame(height: Block.collapsedHeight)
             .background(selected ? Palette.accent.opacity(0.08) : Color.black.opacity(0.018))

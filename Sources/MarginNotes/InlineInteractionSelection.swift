@@ -16,19 +16,21 @@ import MarginCore
         if let monitor { NSEvent.removeMonitor(monitor); self.monitor = nil }
         guard window != nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-            MainActor.assumeIsolated { self?.observe(event) }
-            return event
+            let consumed = MainActor.assumeIsolated { self?.observe(event) == true }
+            return consumed ? nil : event
         }
     }
     deinit { if let monitor { NSEvent.removeMonitor(monitor) } }
-    func observe(_ event: NSEvent) {
+    @discardableResult func observe(_ event: NSEvent) -> Bool {
         guard let store, let window, event.window === window, let root = window.contentView,
               store.note?.blocks.contains(where: { $0.id == blockID }) == true,
               let scope = SelectionWheel.scope(blockID, in: root),
               scope.visibleRect.contains(scope.convert(event.locationInWindow, from: nil)),
               let hit = root.hitTest(root.superview?.convert(event.locationInWindow, from: nil) ?? event.locationInWindow),
-              hit === scope || hit.isDescendant(of: scope) else { return }
+              hit === scope || hit.isDescendant(of: scope) else { return false }
+        guard store.commitTitleEditing(in: window) else { return true }
         store.selectInlineInteraction(blockID)
+        return false
     }
 }
 @MainActor struct InlineInteractionSelection: NSViewRepresentable {

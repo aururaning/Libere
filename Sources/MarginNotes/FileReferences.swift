@@ -221,34 +221,13 @@ extension AppStore {
         if selection == noteID { finishBlockEditing() }
         guard saveEditors() else { return false }
         let previous = workspace.notes[index]; var next = previous
-        guard incoming.allSatisfy({ $0.frame.x.isFinite && $0.frame.y.isFinite && $0.frame.width.isFinite && $0.frame.height.isFinite && $0.frame.width > 0 && $0.frame.height > 0 }) else { throw StoreError.corrupt }
-        let minX = incoming.map(\.frame.x).min()!, minY = incoming.map(\.frame.y).min()!
-        let width = incoming.map(\.frame.maxX).max()! - minX, height = incoming.map(\.frame.maxY).max()! - minY
-        if let point, !point.x.isFinite || !point.y.isFinite { throw StoreError.corrupt }
-        let desired = Rect(max(0,point?.x ?? 28), max(0,point?.y ?? 28), width, height)
-        var frame: Rect?
-        if point != nil {
-            // An explicit paste/drop position is an exact placement, including
-            // overlaps. Never search for a vacancy or move existing handwriting.
-            frame = desired
-            if !next.paper.isContinuous && (desired.maxX > next.width || desired.maxY > next.height) {
-                next.paper = next.width > 794 ? .wideContinuous : .continuous
-            }
-        } else {
-            frame = CanvasLayout.vacant(desired, paper: next.paper, occupied: next.blocks.map(\.visibleFrame), canvasWidth: next.width)
-            if frame == nil && !next.paper.isContinuous {
-                next.paper = next.width > 794 ? .wideContinuous : .continuous
-                frame = CanvasLayout.vacant(desired, paper: next.paper, occupied: next.blocks.map(\.visibleFrame), canvasWidth: next.width)
-            }
-        }
-        guard let frame else { message = "页面宽度不足，无法保留这些内容块的完整尺寸。"; return false }
+        let positioned = try ClipboardPlacement.position(incoming, in: &next, at: point)
         guard Set(incoming.map(\.id)).count == incoming.count else { throw StoreError.corrupt }
         let ids = Dictionary(uniqueKeysWithValues: incoming.map { ($0.id,UUID()) })
         let keptAnchors = anchors.filter { ids[$0.ownerID] != nil }
         let anchorIDs = Dictionary(keptAnchors.map { ($0.id,UUID()) }, uniquingKeysWith: { first,_ in first })
-        let copies = incoming.map { original -> Block in
+        let copies = positioned.map { original -> Block in
             var copy = original; copy.id = ids[original.id]!
-            copy.frame.x += frame.x - minX; copy.frame.y += frame.y - minY
             copy.anchorID = original.anchorID.flatMap { anchorIDs[$0] }
             if var annotations = copy.pageAnnotations {
                 for key in Array(annotations.keys) {
@@ -336,14 +315,16 @@ extension AppStore {
         guard canvas else { nativePaste(); return }
         let payload = CanvasPasteboardContents.blockData(from: pasteboard)
         if let payload {
+            guard commitTitleEditing(in: window) else { return }
             // Copying a whole canvas block explicitly preserves its structure and
             // source index, even when an old text view still owns keyboard focus.
             // Native text selections do not contain this private representation.
             _ = pasteBlocks(payload, at: point); return
         }
         let urls = CanvasPasteboardContents.fileURLs(from: pasteboard)
-        if !urls.isEmpty { _ = pasteFileURLs(urls, at: point, noteID: targetNote); return }
+        if !urls.isEmpty { guard commitTitleEditing(in: window) else { return }; _ = pasteFileURLs(urls, at: point, noteID: targetNote); return }
         if payload == nil, let binary = CanvasPasteboardContents.binaryFile(from: pasteboard) {
+            guard commitTitleEditing(in: window) else { return }
             _ = pasteClipboardFileData(binary.data, suggestedFilename: binary.suggestedFilename, at: point, noteID: targetNote)
             return
         }

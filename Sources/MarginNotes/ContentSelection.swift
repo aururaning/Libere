@@ -4,6 +4,7 @@ import MarginCore
 #endif
 #if os(macOS)
 import WebKit
+import PDFKit
 @MainActor extension AppStore {
     func selectAllFocused(in targetWindow: NSWindow? = nil) {
         guard let window = targetWindow ?? NSApp.keyWindow else { return }
@@ -12,6 +13,7 @@ import WebKit
         }
         var responder = window.firstResponder as? NSView
         while let view = responder {
+            if let pdf = view as? PDFView { pdf.selectAll(nil); return }
             if view is WKWebView { NSApp.sendAction(#selector(NSText.selectAll(_:)), to: window.firstResponder, from: nil); return }
             responder = view.superview
         }

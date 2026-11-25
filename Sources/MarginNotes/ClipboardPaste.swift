@@ -112,7 +112,7 @@ import MarginCore
         }
     }
 
-    private func archiveLocation(for note: Note, hasCopies: Bool, store: AppStore) throws -> (url: URL, binding: String?) {
+    func archiveLocation(for note: Note, hasCopies: Bool, store: AppStore) throws -> (url: URL, binding: String?) {
         let root = store.repository.root
         guard hasCopies else { return (root, nil) }
         if let path = note.managedDirectoryPath {

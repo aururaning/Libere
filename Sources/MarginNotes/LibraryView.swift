@@ -135,7 +135,12 @@ struct NoteTree: Identifiable {
                 }
             }
         }
-        .overlay(alignment: .bottomTrailing) { ClipboardPasteStatusView(coordinator: store.clipboardPastes) }
+        .overlay(alignment: .bottomTrailing) {
+            VStack(spacing: 0) {
+                ClipboardMoveStatusView(coordinator: store.clipboardMoves)
+                ClipboardPasteStatusView(coordinator: store.clipboardPastes)
+            }
+        }
         .onReceive(timer) { _ in if phase == .active { Task { await store.cloud?.refresh(); await store.maintainICloudFiles() } } }
         .task { await store.maintainICloudFiles() }
         .task { if UserDefaults.standard.bool(forKey: "MarginCloudEnabled") { store.enableCloud() } }
@@ -223,7 +228,12 @@ struct NoteTree: Identifiable {
     private func row(_ note: Note) -> some View {
         HStack(spacing: 6) {
             Image(systemName: note.isFolder ? "folder" : "doc.text").foregroundStyle(.secondary)
-            if store.renaming == note.id { SidebarNameField(text: $store.renameDraft, commit: { store.commitRename() }, cancel: { store.cancelRename() }).frame(height: 23) }
+            if store.renaming == note.id {
+                SidebarNameField(text: $store.renameDraft, commit: {
+                    guard store.renaming == note.id else { return true }
+                    store.commitRename(); return store.renaming == nil
+                }, cancel: { if store.renaming == note.id { store.cancelRename() } }, owner: store, noteID: note.id).frame(height: 23)
+            }
             else { Text(note.title.isEmpty ? "未命名" : note.title) }
         }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded {
@@ -231,9 +241,6 @@ struct NoteTree: Identifiable {
             })
             .lineLimit(1).contextMenu {
                 pageActions(note)
-            }
-            .onDrop(of: [UTType.fileURL.identifier], isTargeted: nil) { providers in
-                store.indexDroppedFiles(providers: providers, at: nil, noteID: note.id)
             }
     }
     @ViewBuilder private func pageActions(_ note: Note) -> some View {
@@ -251,7 +258,7 @@ struct NoteTree: Identifiable {
         HStack(spacing: 14) {
             VStack(alignment: .leading, spacing: 5) {
                 Text(breadcrumb(note)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                PageTitleField(noteID: note.id, title: note.title, commit: { store.renamePage($0, to: $1) })
+                PageTitleField(noteID: note.id, title: note.title, commit: { store.renamePage($0, to: $1) }, owner: store)
                     .id(note.id).frame(height: 31)
             }
             Spacer()
@@ -486,7 +493,7 @@ struct NoteTree: Identifiable {
     @ViewState private var page = 0
     @ViewState private var pageCount = 0
     @ViewState private var loadedContent: String?
-    @ViewState private var mode = "ink"
+    @ViewState private var mode = "read"
     @ViewState private var zoom = 1.0
     @ViewState private var notebook: NotebookSession?
     @ViewState private var textFile: TextFileSession?
@@ -619,14 +626,5 @@ struct NoteTree: Identifiable {
         guard pageCount > 0, (0..<pageCount).contains(next), next != page, store.prepareAttachmentNavigation() else { return }
         page = next
     }
-    private func zoomableEditor<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        let editor = content()
-        return GeometryReader { viewport in
-            CanvasViewport(pageID: block.id, size: viewport.size, zoom: zoom, fitting: false,
-                           didZoom: { zoom = min(6, max(0.25, $0)) },
-                           content: AnyView(editor.frame(width: viewport.size.width, height: viewport.size.height)
-                            .environment(\.canvasRenderScale, zoom).environment(\.colorScheme, .light)),
-                           routesMagnification: true)
-        }
-    }
+
 }

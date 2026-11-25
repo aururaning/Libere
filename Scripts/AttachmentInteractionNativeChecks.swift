@@ -123,12 +123,13 @@ import WebKit
     selectedInner.contentView.scroll(to: CGPoint(x: 0, y: 100_000)); selectedInner.reflectScrolledClipView(selectedInner.contentView)
     let blankPoint = show(CGPoint(x: 600, y: 300)), outerBeforeBoundary = viewport.contentView.bounds.origin
     check(viewport.routeAttachmentScroll(at: blankPoint, in: window, delta: CGSize(width: 0, height: -40), precise: true)
-          && viewport.contentView.bounds.origin == outerBeforeBoundary,
-          "A selected block consumes wheel input at its bottom even when the pointer is on blank canvas")
+          && viewport.contentView.bounds.minY > outerBeforeBoundary.y,
+          "At the selected block's bottom, the same downward wheel direction continues in the outer canvas")
+    let outerAfterBoundary = viewport.contentView.bounds.origin
     store.beginBlockEditing(file.id)
     check(viewport.routeAttachmentScroll(at: blankPoint, in: window, delta: CGSize(width: 0, height: 40), precise: true)
-          && viewport.contentView.bounds.origin == outerBeforeBoundary,
-          "Editing does not release selected-block wheel ownership to the outer page")
+          && viewport.contentView.bounds.origin == outerAfterBoundary,
+          "Reversing direction moves the selected editor again without moving the outer page")
     store.clearBlockSelection(); store.edit { $0.blocks.append(cover) }
     let hoverPoint = show(CGPoint(x: 200, y: 200)), innerBefore = selectedInner.contentView.bounds.origin
     check(viewport.routeAttachmentScroll(at: hoverPoint, in: window, delta: CGSize(width: 0, height: -40), precise: true)

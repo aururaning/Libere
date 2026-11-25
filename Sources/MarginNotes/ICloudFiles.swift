@@ -3,6 +3,67 @@ import SwiftUI
 import MarginCore
 #endif
 
+/// Access history belongs to this Mac, not to the indexed library or the
+/// preferences database. All decoding, encoding and file I/O uses one queue.
+final class ICloudAccessMetadata: @unchecked Sendable {
+    let url: URL
+    private let preferences: UserDefaults
+    private let legacyKey: String
+    private let queue = DispatchQueue(label: "Libere.iCloudAccessMetadata", qos: .utility)
+    private var loaded: [String: Date]?
+    private var persisted: [String: Date] = [:]
+    private var legacyData: Data?
+
+    init(identity: String, preferences: UserDefaults, directory: URL? = nil) {
+        let directory = directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Libere/Metadata", isDirectory: true)
+        url = directory.appendingPathComponent(identity + ".json")
+        self.preferences = preferences; legacyKey = "LibereICloudFiles." + identity + ".access"
+    }
+    func load() async throws -> [String: Date] {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async { continuation.resume(with: Result { try self.read() }) }
+        }
+    }
+    func loadSynchronously() throws -> [String: Date] { try queue.sync { try read() } }
+    func save(_ values: [String: Date], completion: @escaping @Sendable (Error?) -> Void) {
+        queue.async {
+            do { try self.write(values); completion(nil) }
+            catch { completion(error) }
+        }
+    }
+    /// Called during application termination; drains pending saves before return.
+    func flush(_ values: [String: Date]) throws { try queue.sync { try write(values) } }
+    private func read() throws -> [String: Date] {
+        if let loaded { return loaded }
+        if FileManager.default.fileExists(atPath: url.path) {
+            persisted = try JSONDecoder().decode([String: Date].self, from: Data(contentsOf: url))
+        }
+        legacyData = preferences.data(forKey: legacyKey)
+        var values = persisted
+        if let legacyData {
+            let legacy = try JSONDecoder().decode([String: Date].self, from: legacyData)
+            values.merge(legacy, uniquingKeysWith: max)
+        }
+        loaded = values
+        return values
+    }
+    private func write(_ values: [String: Date]) throws {
+        _ = try read()
+        guard values != persisted || legacyData != nil else { return }
+        let data = try JSONEncoder().encode(values)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        let verified = try JSONDecoder().decode([String: Date].self, from: Data(contentsOf: url))
+        guard verified == values else { throw CocoaError(.fileWriteUnknown) }
+        persisted = values; loaded = values
+        if let legacyData, preferences.data(forKey: legacyKey) == legacyData {
+            preferences.removeObject(forKey: legacyKey)
+        }
+        legacyData = nil
+    }
+}
+
 /// iCloud Drive availability is independent of CloudKit note synchronization.
 struct ICloudFileSnapshot: Equatable, Sendable {
     var ubiquitous = false
@@ -49,7 +110,11 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     private let root: URL
     private let preferences: UserDefaults
     private let preferenceKey: String
-    private var lastViewed: [String: Date]
+    private var lastViewed: [String: Date] = [:]
+    private let accessMetadata: ICloudAccessMetadata
+    private var accessLoadTask: Task<Void, Never>?
+    private var accessLoaded = false
+    private var accessDirty = false
     private var leases: [String: Set<UUID>] = [:]
     private var downloadTasks: [String: Task<Void, Never>] = [:]
     private var cloudPaths: Set<String> = []
@@ -61,16 +126,25 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     private let startDownload: @Sendable (URL) throws -> Void
     private let evict: @Sendable (URL) throws -> Void
 
-    init(root: URL, preferences: UserDefaults = .standard,
+    init(root: URL, preferences: UserDefaults = .standard, metadataDirectory: URL? = nil,
          inspect: @escaping @Sendable (URL) throws -> ICloudFileSnapshot = { try ICloudFileSnapshot.read($0) },
          download: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.startDownloadingUbiquitousItem(at: $0) },
          evict: @escaping @Sendable (URL) throws -> Void = { try FileManager.default.evictUbiquitousItem(at: $0) }) {
         self.root = root; self.preferences = preferences; self.inspect = inspect; self.startDownload = download; self.evict = evict
-        preferenceKey = "LibereICloudFiles." + AssetFingerprint.sha256(Data(root.standardizedFileURL.resolvingSymlinksInPath().path.utf8))
+        let identity = AssetFingerprint.sha256(Data(root.standardizedFileURL.resolvingSymlinksInPath().path.utf8))
+        preferenceKey = "LibereICloudFiles." + identity
         automaticRelease = preferences.object(forKey: preferenceKey + ".enabled") as? Bool ?? true
-        lastViewed = (preferences.data(forKey: preferenceKey + ".access")).flatMap { try? JSONDecoder().decode([String: Date].self, from: $0) } ?? [:]
+        let metadata = ICloudAccessMetadata(identity: identity, preferences: preferences, directory: metadataDirectory)
+        accessMetadata = metadata
+        accessLoadTask = Task { [weak self] in
+            do {
+                let values = try await metadata.load()
+                guard !Task.isCancelled else { return }
+                self?.finishLoadingAccess(values)
+            } catch { self?.accessFailure(error) }
+        }
     }
-    deinit { prefetchTask?.cancel(); persistTask?.cancel(); for task in downloadTasks.values { task.cancel() } }
+    deinit { accessLoadTask?.cancel(); prefetchTask?.cancel(); persistTask?.cancel(); for task in downloadTasks.values { task.cancel() } }
     func path(for url: URL) -> String? { ReferencePath.relative(url, inside: root) }
     func availability(of url: URL) -> Availability { path(for: url).flatMap { states[$0] } ?? .checking }
     func retain(_ url: URL, token: UUID, now: Date = Date()) {
@@ -85,17 +159,43 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     }
     func viewed(_ url: URL, now: Date = Date()) { if let path = path(for: url) { touch(path, now: now) } }
     private func touch(_ path: String, now: Date) {
-        lastViewed[path] = now; persistTask?.cancel()
+        guard lastViewed[path] != now else { return }
+        lastViewed[path] = now; accessDirty = true; persistTask?.cancel()
         persistTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }; self?.persist()
+            guard !Task.isCancelled else { return }; self?.saveAccess()
+        }
+    }
+    private func finishLoadingAccess(_ values: [String: Date], save: Bool = true) {
+        guard !accessLoaded else { return }
+        // A preview may have been opened while the old history was loading.
+        if lastViewed.isEmpty { lastViewed = values }
+        else { lastViewed.merge(values, uniquingKeysWith: max) }
+        accessLoaded = true; accessDirty = true
+        if save { saveAccess() }
+    }
+    private func accessFailure(_ error: Error) {
+        status = (accessLoaded ? "访问记录暂时无法保存：" : "访问记录暂时无法读取，自动释放已暂停：") + error.localizedDescription
+    }
+    private func saveAccess() {
+        guard accessLoaded, accessDirty else { return }
+        accessDirty = false
+        accessMetadata.save(lastViewed) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor [weak self] in
+                self?.accessDirty = true; self?.accessFailure(error)
+            }
         }
     }
     func persist(now: Date = Date()) {
+        persistTask?.cancel()
         // Persisting during termination also counts still-open previews as viewed
         // now, even if SwiftUI does not send onDisappear before process exit.
         for path in leases.keys { lastViewed[path] = max(lastViewed[path] ?? now, now) }
-        if let data = try? JSONEncoder().encode(lastViewed) { preferences.set(data, forKey: preferenceKey + ".access") }
+        do {
+            if !accessLoaded { finishLoadingAccess(try accessMetadata.loadSynchronously(), save: false) }
+            try accessMetadata.flush(lastViewed); accessDirty = false
+        } catch { accessDirty = true; accessFailure(error) }
     }
     func refresh(_ url: URL) async {
         guard let path = path(for: url), states[path] != .releasing else { return }
@@ -147,13 +247,16 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     /// enumeration occurs, and each timer tick inspects at most 32 old candidates.
     func maintain(indexedPaths: Set<String>, protectedPaths: Set<String>, now: Date = Date(), limit: Int = 32,
                   isProtected: @MainActor (String) -> Bool = { _ in false }) async {
-        guard automaticRelease, !sweepRunning else { return }
+        await accessLoadTask?.value
+        guard accessLoaded, automaticRelease, !sweepRunning else { return }
         sweepRunning = true; defer { sweepRunning = false }
         let eligible = indexedPaths.filter(Self.manages)
-        lastViewed = lastViewed.filter { eligible.contains($0.key) || leases[$0.key] != nil }
-        for path in eligible where lastViewed[path] == nil { lastViewed[path] = now }
+        for path in lastViewed.keys.filter({ !eligible.contains($0) && leases[$0] == nil }) {
+            lastViewed.removeValue(forKey: path); accessDirty = true
+        }
+        for path in eligible where lastViewed[path] == nil { lastViewed[path] = now; accessDirty = true }
         let old = eligible.filter { now.timeIntervalSince(lastViewed[$0] ?? now) >= Self.inactivity }.sorted()
-        persist(now: now)
+        saveAccess()
         guard !old.isEmpty else { return }
         let count = min(max(0, limit), old.count), start = cursor % old.count
         cursor = (start + count) % old.count
@@ -205,6 +308,8 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     /// Explicit release ignores age, while retaining every upload/conflict/open
     /// document/kernel protection. Visible previews must be collapsed first.
     func releasePage(_ urls: [URL], isProtected: @MainActor (String) -> Bool = { _ in false }) async {
+        await accessLoadTask?.value
+        guard accessLoaded else { return }
         while sweepRunning {
             try? await Task.sleep(nanoseconds: 100_000_000)
             if Task.isCancelled { return }
@@ -239,7 +344,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     let url: URL?
     var close: (() -> Void)? = nil
     @ViewBuilder var content: () -> Content
-    @SwiftUI.State private var token = UUID()
+    @ViewState private var token = UUID()
     private func buttonTitle(_ url: URL) -> String { if case .failed = files.availability(of: url) { return "重试" }; return "下载文件" }
     var body: some View {
         ZStack {

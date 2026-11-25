@@ -1,4 +1,6 @@
 import SwiftUI
+import WebKit
+import PDFKit
 #if SWIFT_PACKAGE
 import MarginCore
 #endif
@@ -83,7 +85,7 @@ import MarginCore
     private(set) var centeringAdjustments = 0
     private var pageID: UUID?
     private var requestedZoom: CGFloat = 1
-    var routesMagnification = false { didSet { updateMagnificationMonitor() } }
+    var routesMagnification = false { didSet { updateMagnificationMonitor(); updatePointerMonitor() } }
     var attachmentBlockID: UUID?
     private var magnificationMonitor: Any?
     private var deskMonitor: Any?
@@ -134,7 +136,7 @@ import MarginCore
         if notification.object as? NSWindow === window { pointerInteraction?.cancel() }
     }
     private func updatePointerMonitor() {
-        guard pointerInteraction != nil, window != nil else {
+        guard pointerInteraction != nil || routesMagnification, window != nil else {
             if let pointerMonitor { NSEvent.removeMonitor(pointerMonitor); self.pointerMonitor = nil }
             pointerInteraction?.cancel()
             return
@@ -146,14 +148,23 @@ import MarginCore
                 guard let self else { return false }
                 if event.type != .keyDown { self.rememberCanvasPointer(at: event.locationInWindow, in: event.window) }
                 if event.type == .scrollWheel {
+                    if self.pointerInteraction == nil {
+                        return self.routeReaderScroll(at: event.locationInWindow, in: event.window,
+                            delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas)
+                    }
                     return self.routeAttachmentScroll(at: event.locationInWindow, in: event.window,
                         delta: CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY), precise: event.hasPreciseScrollingDeltas)
                 }
                 if event.type == .leftMouseDown {
+                    if SelectionWheel.owns(event.locationInWindow, in: event.window, scroll: self),
+                       !CanvasTitleEditing.commit(in: event.window, interaction: self.pointerInteraction) {
+                        self.pointerInteraction?.cancel(); return true
+                    }
                     if event.modifierFlags.contains(.command), self.pointerInteraction?.openMarkdownLink(at: event.locationInWindow, in: event.window) == true { return true }
                     guard !event.modifierFlags.contains(.control),
-                          let area = self.pointerArea(at: event.locationInWindow, in: event.window) else { return false }
-                    return self.beginPointer(at: event.locationInWindow, in: event.window, area: area, clickCount: event.clickCount, extendingSelection: event.modifierFlags.contains(.shift))
+                          let hit = self.pointerResolution(at: event.locationInWindow, in: event.window) else { return false }
+                    return self.beginPointer(at: event.locationInWindow, in: event.window, hit: hit,
+                        clickCount: event.clickCount, extendingSelection: event.modifierFlags.contains(.shift))
                 }
                 guard self.pointerInteraction?.isPressed == true else { return false }
                 if event.type == .keyDown {
@@ -191,10 +202,36 @@ import MarginCore
     @discardableResult func routeAttachmentScroll(at point: NSPoint, in eventWindow: NSWindow?, delta: CGSize, precise: Bool) -> Bool {
         guard let window, eventWindow === window, !liveMagnifying, pointerInteraction?.isPressed != true,
               SelectionWheel.owns(point, in: eventWindow, scroll: self), pointerInteraction != nil else { return false }
+        let page = pageID
         if let id = pointerInteraction?.selectedScrollBlockID, let scope = SelectionWheel.scope(id, in: host),
-           SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point) { return true }
+           SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point, fallback: { [weak self] in
+               guard let self, self.pageID == page, self.pointerInteraction?.selectedScrollBlockID == id,
+                     self.window === window else { return }
+               _ = self.scrollPaper(delta: delta, precise: precise)
+           }) { return true }
         _ = scrollPaper(delta: delta, precise: precise)
         return true
+    }
+    /// A PDFKit page has a private scroll view, but its fixed 1x page is fitted
+    /// by this enclosing reader. Prefer a movable inner editor, then this paper.
+    @discardableResult func routeReaderScroll(at point: NSPoint, in eventWindow: NSWindow?, delta: CGSize, precise: Bool) -> Bool {
+        guard pointerInteraction == nil, routesMagnification, let window, eventWindow === window,
+              SelectionWheel.owns(point, in: eventWindow, scroll: self), let root = window.contentView else { return false }
+        let page = pageID
+        var child = root.hitTest(root.superview?.convert(point, from: nil) ?? point)
+        var owner: NSView?
+        while let view = child, view !== self {
+            if view.isDescendant(of: host) {
+                if view is WKWebView { owner = view; break }
+                if owner == nil, view is NSScrollView { owner = view }
+            }
+            child = view.superview
+        }
+        if let owner, SelectionWheel.scrollContent(in: owner, delta: delta, precise: precise, point: point, fallback: { [weak self] in
+            guard let self, self.pageID == page, self.window === window else { return }
+            _ = self.scrollPaper(delta: delta, precise: precise)
+        }) { return true }
+        return scrollPaper(delta: delta, precise: precise)
     }
     func reveal(_ rect: CGRect) {
         let target = contentView.convert(rect, from: paper)
@@ -219,28 +256,72 @@ import MarginCore
     /// NSScrollView magnification. Use real, explicit native surface bounds instead.
     /// Do not consume inline buttons, native text selection, anchors or scrollbars.
     func pointerArea(at point: NSPoint, in eventWindow: NSWindow?) -> CanvasPointerInteraction.Area? {
+        pointerResolution(at: point, in: eventWindow)?.area
+    }
+    private struct PointerResolution {
+        let area: CanvasPointerInteraction.Area
+        var control: CanvasHitTarget? = nil
+    }
+    private func pointerResolution(at point: NSPoint, in eventWindow: NSWindow?) -> PointerResolution? {
         guard let window, eventWindow === window, let pointerInteraction, !liveMagnifying,
               SelectionWheel.owns(point, in: eventWindow, scroll: self) else { return nil }
         for scroller in [horizontalScroller, verticalScroller].compactMap({ $0 }) {
             if !scroller.isHidden && scroller.bounds.contains(scroller.convert(point, from: nil)) { return nil }
         }
+        if let root = window.contentView {
+            var native = root.hitTest(root.superview?.convert(point, from: nil) ?? point)
+            while let view = native, view !== host {
+                if view is NSControl || view is PageAnnotationPointerView || view is PDFView { return nil }
+                native = view.superview
+            }
+        }
+        var views = [host as NSView], surfaces: [CanvasPointerView] = []
+        while let view = views.popLast() {
+            if let surface = view as? CanvasPointerView, surface.containsPointer(surface.convert(point, from: nil)) { surfaces.append(surface) }
+            views.append(contentsOf: view.subviews)
+        }
+        // A visible selected handle wins before the broad paper surface. This is
+        // one resolution used for the complete ordinary mouse/three-finger drag.
+        for surface in surfaces {
+            switch surface.area {
+            case .move(let id) where id == pointerInteraction.selectedBlockID:
+                return PointerResolution(area: surface.area, control: .move(id))
+            case .resize(let id) where id == pointerInteraction.selectedBlockID:
+                return PointerResolution(area: surface.area, control: .resize(id))
+            default: break
+            }
+        }
         let target = pointerInteraction.hit(at: paper.convert(point, from: nil))
+        if case .block(let id) = target {
+            var controls = [host as NSView]
+            while let candidate = controls.popLast() {
+                if let button = candidate as? CanvasInlineButtonControl, button.ownerBlockID == id,
+                   !button.isHiddenOrHasHiddenAncestor, button.bounds.contains(button.convert(point, from: nil)) { return nil }
+                controls.append(contentsOf: candidate.subviews)
+            }
+        }
         if case .block(let id) = target, pointerInteraction.editingBlockID == id,
            let scope = SelectionWheel.scope(id, in: host), SelectionWheel.editorContains(point, in: scope) { return nil }
-        var pending = [host as NSView]
-        while let view = pending.popLast() {
-            if let surface = view as? CanvasPointerView, surface.area.accepts(target),
-               surface.containsPointer(surface.convert(point, from: nil)) { return surface.area }
-            pending.append(contentsOf: view.subviews)
-        }
+        if let surface = surfaces.first(where: { $0.area.accepts(target) }) { return PointerResolution(area: surface.area) }
         return nil
     }
     @discardableResult func beginPointer(at point: NSPoint, in eventWindow: NSWindow?,
                                          area: CanvasPointerInteraction.Area, clickCount: Int, extendingSelection: Bool = false) -> Bool {
+        guard let hit = pointerResolution(at: point, in: eventWindow), hit.area == area else { return false }
+        return beginPointer(at: point, in: eventWindow, hit: hit, clickCount: clickCount, extendingSelection: extendingSelection)
+    }
+    private func beginPointer(at point: NSPoint, in eventWindow: NSWindow?, hit: PointerResolution,
+                              clickCount: Int, extendingSelection: Bool) -> Bool {
         guard let window, eventWindow === window, !liveMagnifying,
               SelectionWheel.owns(point, in: eventWindow, scroll: self) else { return false }
-        return pointerInteraction?.down(at: paper.convert(point, from: nil), area: area,
-                                        clickCount: clickCount, scale: magnification, extendingSelection: extendingSelection) == true
+        guard CanvasTitleEditing.commit(in: window, interaction: pointerInteraction) else {
+            pointerInteraction?.cancel(); return true
+        }
+        let handled = pointerInteraction?.down(at: paper.convert(point, from: nil), area: hit.area,
+                                        clickCount: clickCount, scale: magnification, extendingSelection: extendingSelection,
+                                        renderedControl: hit.control) == true
+        if handled { CanvasTitleEditing.claimKeyboard(in: window, interaction: pointerInteraction) }
+        return handled
     }
     @discardableResult func continuePointer(_ type: NSEvent.EventType, at point: NSPoint, in eventWindow: NSWindow?) -> Bool {
         guard let pointerInteraction, pointerInteraction.isPressed else { return false }
@@ -257,8 +338,8 @@ import MarginCore
         }
         guard deskMonitor == nil else { return }
         deskMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-            MainActor.assumeIsolated { _ = self?.handleDeskClick(at: event.locationInWindow, in: event.window) }
-            return event
+            let handled = MainActor.assumeIsolated { self?.handleDeskClick(at: event.locationInWindow, in: event.window) == true }
+            return handled ? nil : event
         }
     }
     @discardableResult func handleDeskClick(at point: NSPoint, in eventWindow: NSWindow?) -> Bool {
@@ -268,7 +349,12 @@ import MarginCore
         for scroller in [horizontalScroller, verticalScroller].compactMap({ $0 }) {
             if !scroller.isHidden && scroller.bounds.contains(scroller.convert(point, from: nil)) { return false }
         }
-        didClickDesk?(); return true
+        guard CanvasTitleEditing.commit(in: window, interaction: pointerInteraction) else {
+            pointerInteraction?.cancel(); return true
+        }
+        didClickDesk?()
+        CanvasTitleEditing.claimKeyboard(in: window, interaction: pointerInteraction)
+        return true
     }
     /// Reader gestures go to the nearest native zoom viewport before WebKit or an
     /// embedded text scroll view can consume them. Wheel, pen and keyboard events pass through.
@@ -363,7 +449,7 @@ import MarginCore
         host.rootView = content
         centerCanvas()
         guard !liveMagnifying else { return }
-        let scale = CGFloat(min(6, max(0.25, zoom)))
+        let scale = min(maxMagnification, max(minMagnification, CGFloat(zoom.isFinite ? zoom : 1)))
         if changedPage || abs(requestedZoom - scale) > 0.0001 || abs(magnification - scale) > 0.0001 {
             requestedZoom = scale
             if fitting || changedPage {
@@ -393,6 +479,8 @@ import MarginCore
     var didChangeVisibleRect: ((UUID, CGRect) -> Void)? = nil
     var revealRect: CGRect? = nil
     var didReveal: (() -> Void)? = nil
+    var minimumZoom = 0.25
+    var maximumZoom = 6.0
     func makeNSView(context: Context) -> CanvasScrollView { CanvasScrollView(frame: .zero) }
     func updateNSView(_ view: CanvasScrollView, context: Context) {
         view.didZoom = didZoom
@@ -402,6 +490,8 @@ import MarginCore
         view.pointerInteraction = pointerInteraction
         view.attachmentBlockID = attachmentBlockID
         view.allowsMagnification = attachmentBlockID == nil
+        view.minMagnification = CGFloat(max(0.001, minimumZoom))
+        view.maxMagnification = CGFloat(max(minimumZoom, maximumZoom))
         (view.contentView as? CenteredCanvasClipView)?.centersVertically = attachmentBlockID == nil
         if attachmentBlockID != nil {
             view.backgroundColor = .white; view.contentView.backgroundColor = .white
@@ -409,7 +499,7 @@ import MarginCore
         view.update(pageID: pageID, size: size, zoom: zoom, fitting: fitting, content: content)
         if let revealRect {
             view.reveal(revealRect)
-            if let didReveal { DispatchQueue.main.async(execute: didReveal) }
+            if let didReveal { DispatchQueue.main.async { didReveal() } }
         }
     }
 }
@@ -489,7 +579,7 @@ import MarginCore
         }
         centerCanvas()
         guard !liveMagnifying else { return }
-        let scale = CGFloat(min(6, max(0.25, zoom)))
+        let scale = min(scroll.maximumZoomScale, max(scroll.minimumZoomScale, CGFloat(zoom.isFinite ? zoom : 1)))
         if changedPage || abs(scroll.zoomScale - scale) > 0.0001 {
             let oldScale = scroll.zoomScale, oldOffset = scroll.contentOffset
             let center = CGPoint(x: (oldOffset.x + scroll.bounds.width / 2) / oldScale,
@@ -530,11 +620,17 @@ import MarginCore
     var didChangeVisibleRect: ((UUID, CGRect) -> Void)? = nil
     var revealRect: CGRect? = nil
     var didReveal: (() -> Void)? = nil
+    var minimumZoom = 0.25
+    var maximumZoom = 6.0
     func makeUIViewController(context: Context) -> CanvasScrollController { CanvasScrollController() }
     func updateUIViewController(_ controller: CanvasScrollController, context: Context) {
         controller.didZoom = didZoom
         controller.didChangeVisibleRect = didChangeVisibleRect
         controller.didClickDesk = didClickDesk
+        controller.loadViewIfNeeded()
+        controller.scroll.minimumZoomScale = CGFloat(max(0.001, minimumZoom))
+        controller.scroll.maximumZoomScale = CGFloat(max(minimumZoom, maximumZoom))
+        controller.scroll.pinchGestureRecognizer?.isEnabled = attachmentBlockID == nil
         controller.update(pageID: pageID, size: size, zoom: zoom, fitting: fitting, content: content)
         if let revealRect {
             controller.scroll.scrollRectToVisible(controller.paper.convert(revealRect, to: controller.scroll), animated: false)

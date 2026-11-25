@@ -50,46 +50,63 @@ import WebKit
         }
         return nil
     }
-    /// Return true for an available scroll owner even at either boundary. The
-    /// wheel never bubbles from a selected block to its containing page.
-    @discardableResult static func scrollContent(in root: NSView, delta: CGSize, precise: Bool, point: NSPoint) -> Bool {
-        guard !root.isHiddenOrHasHiddenAncestor else { return false }
-        if let web = root as? WKWebView {
+    private static func scrollOwner(in root: NSView) -> NSView? {
+        guard !root.isHiddenOrHasHiddenAncestor else { return nil }
+        if root is WKWebView || root is NSScrollView { return root }
+        for child in root.subviews { if let owner = scrollOwner(in: child) { return owner } }
+        return nil
+    }
+    /// Consume only if this direction can move the selected contents. WebKit
+    /// answers asynchronously; its original event is retained and falls back once.
+    @discardableResult static func scrollContent(in root: NSView, delta: CGSize, precise: Bool, point: NSPoint,
+                                                  fallback: (@MainActor () -> Void)? = nil) -> Bool {
+        guard let owner = scrollOwner(in: root) else { return false }
+        if let web = owner as? WKWebView {
             let local = web.convert(point, from: nil)
             let scale = max(0.01, web.pageZoom)
             let dx = -delta.width * (precise ? 1 : 24) / scale
             let dy = -delta.height * (precise ? 1 : 24) / scale
-            guard dx.isFinite, dy.isFinite else { return true }
+            guard dx.isFinite, dy.isFinite else { return false }
             let x = max(0, min(web.bounds.width, local.x)) / scale
             let y = max(0, min(web.bounds.height, web.isFlipped ? local.y : web.bounds.height - local.y)) / scale
             web.evaluateJavaScript("""
             (() => {
               let e = document.elementFromPoint(\(x), \(y));
+              const candidates = [];
               while (e && e !== document.documentElement && e !== document.body) {
                 const s = getComputedStyle(e);
                 if ((/auto|scroll/.test(s.overflowY) && e.scrollHeight > e.clientHeight)
-                    || (/auto|scroll/.test(s.overflowX) && e.scrollWidth > e.clientWidth)) break;
+                    || (/auto|scroll/.test(s.overflowX) && e.scrollWidth > e.clientWidth)) candidates.push(e);
                 e = e.parentElement;
               }
-              (e && e !== document.body ? e : document.scrollingElement)?.scrollBy({left:\(dx), top:\(dy), behavior:'instant'});
+              if (document.scrollingElement) candidates.push(document.scrollingElement);
+              for (const item of candidates) {
+                const beforeX = item.scrollLeft, beforeY = item.scrollTop;
+                item.scrollBy({left:\(dx), top:\(dy), behavior:'instant'});
+                if (Math.abs(item.scrollLeft-beforeX)>0.01 || Math.abs(item.scrollTop-beforeY)>0.01) return true;
+              }
+              return false;
             })()
-            """, completionHandler: nil)
+            """) { result, error in
+                if error != nil || (result as? Bool) != true { fallback?() }
+            }
             return true
         }
-        if let scroll = root as? NSScrollView {
-            scrollPage(scroll, delta: delta, precise: precise); return true
+        if let scroll = owner as? NSScrollView {
+            return scrollPage(scroll, delta: delta, precise: precise)
         }
-        for child in root.subviews where scrollContent(in: child, delta: delta, precise: precise, point: point) { return true }
         return false
     }
-    static func scrollPage(_ scroll: NSScrollView, delta: CGSize, precise: Bool) {
-        guard delta.width.isFinite, delta.height.isFinite else { return }
-        if let canvas = scroll as? CanvasScrollView { _ = canvas.scrollPaper(delta: delta, precise: precise); return }
+    @discardableResult static func scrollPage(_ scroll: NSScrollView, delta: CGSize, precise: Bool) -> Bool {
+        guard delta.width.isFinite, delta.height.isFinite else { return false }
+        if let canvas = scroll as? CanvasScrollView { return canvas.scrollPaper(delta: delta, precise: precise) }
         let clip = scroll.contentView, unit = clip.convert(NSSize(width: 1, height: 1), from: nil)
+        let before = clip.bounds.origin
         var rect = clip.bounds
         rect.origin.x -= delta.width * (precise ? 1 : scroll.horizontalLineScroll) * abs(unit.width)
         rect.origin.y += delta.height * (precise ? 1 : scroll.verticalLineScroll) * abs(unit.height) * (scroll.documentView?.isFlipped == true ? -1 : 1)
         clip.scroll(to: clip.constrainBoundsRect(rect).origin); scroll.reflectScrolledClipView(clip)
+        return abs(before.x - clip.bounds.minX) > 0.0001 || abs(before.y - clip.bounds.minY) > 0.0001
     }
 }
 
@@ -126,7 +143,11 @@ import WebKit
         guard let store, store.selection == pageID, eventWindow === window, let outer = enclosingScrollView,
               SelectionWheel.owns(point, in: eventWindow, scroll: outer), let content = outer.documentView else { return false }
         if store.folderBlockSelection == pageID, let scope = SelectionWheel.scope(pageID, in: content),
-           SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point) { return true }
+           SelectionWheel.scrollContent(in: scope, delta: delta, precise: precise, point: point, fallback: { [weak self, weak outer] in
+               guard let self, let outer, let current = self.store, current.selection == self.pageID,
+                     current.folderBlockSelection == self.pageID, outer.window === eventWindow else { return }
+               SelectionWheel.scrollPage(outer, delta: delta, precise: precise)
+           }) { return true }
         SelectionWheel.scrollPage(outer, delta: delta, precise: precise)
         return true
     }

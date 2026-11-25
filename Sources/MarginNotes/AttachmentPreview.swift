@@ -53,55 +53,6 @@ struct GenericFileDescriptor: Equatable {
     }
 }
 
-@MainActor struct AttachmentPreview: View {
-    let url: URL
-    let filename: String
-    @ViewState private var result: Result<String, Error>?
-    @ViewState private var imageResult: Result<AttachmentImage, Error>?
-
-    var body: some View {
-        if AttachmentFormat(filename: filename) == nil {
-            GenericFilePreview(url: url, filename: filename)
-        } else if !FileManager.default.fileExists(atPath: url.path) {
-            ContentUnavailableView("附件尚未下载", systemImage: "icloud.and.arrow.down")
-        } else {
-            Group {
-                if AttachmentFormat(filename: filename) == .image {
-                    switch imageResult {
-                    case .success(let image):
-                        GeometryReader { viewport in
-                            let width = max(1, viewport.size.width)
-                            ScrollView([.horizontal, .vertical]) {
-                                Image(decorative: image.image, scale: 1).resizable().interpolation(.high)
-                                    .frame(width: width, height: width * image.size.height / image.size.width)
-                                    .accessibilityLabel(filename)
-                            }
-                        }
-                    case .failure(let error): Text(error.localizedDescription).font(.caption).padding()
-                    case nil: ProgressView()
-                    }
-                } else {
-                    switch result {
-                    case .success(let html): AttachmentWebView(html: html)
-                    case .failure(let error): Text(error.localizedDescription).font(.caption).padding()
-                    case nil: ProgressView()
-                    }
-                }
-            }.task(id: "\(url.absoluteString)-\(filename)") {
-                result = nil; imageResult = nil
-                guard let format = AttachmentFormat(filename: filename) else { return }
-                if format == .image {
-                    let rendered = await Task.detached(priority: .userInitiated) { Result { try AttachmentImage.load(from: url) } }.value
-                    if !Task.isCancelled { imageResult = rendered }
-                } else {
-                    let rendered = await Task.detached(priority: .userInitiated) { Result { try format.document(at: url) } }.value
-                    if !Task.isCancelled { result = rendered }
-                }
-            }
-        }
-    }
-}
-
 @MainActor final class AttachmentNavigation: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     var html: String?
     private(set) var measurementID = UUID().uuidString

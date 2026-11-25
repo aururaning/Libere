@@ -33,6 +33,7 @@ typealias ViewState<Value> = SwiftUI.State<Value>
                 Button("剪切") { bootstrap.store?.cutFocused() }.keyboardShortcut("x", modifiers: .command)
                 Button("复制") { bootstrap.store?.copyFocused() }.keyboardShortcut("c", modifiers: .command)
                 Button("粘贴") { bootstrap.store?.pasteFocused() }.keyboardShortcut("v", modifiers: .command)
+                Button("移动到这里") { bootstrap.store?.moveFocused() }.keyboardShortcut("v", modifiers: [.command, .option])
                 Divider()
                 Button("全选框内内容") { bootstrap.store?.selectAllFocused() }.keyboardShortcut("a", modifiers: .command)
             }
@@ -68,6 +69,7 @@ typealias ViewState<Value> = SwiftUI.State<Value>
                 Button("撤销画布操作") { bootstrap.store?.undo() }.keyboardShortcut("z", modifiers: [.command, .option])
                 Button("重做画布操作") { bootstrap.store?.redo() }.keyboardShortcut("z", modifiers: [.command, .option, .shift])
                 Button("保存到本机") { bootstrap.store?.saveEditors(); bootstrap.store?.flush() }.keyboardShortcut("s", modifiers: .command)
+                Button("恢复未完成的文件移动") { bootstrap.store?.clipboardMoves.recoverPending() }
                 Button("存储位置…") { bootstrap.showingStorage = true }
                 Button("Agent 接入…") { bootstrap.showingAgent = true }.disabled(bootstrap.agent == nil)
             }

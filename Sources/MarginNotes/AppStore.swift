@@ -84,6 +84,7 @@ enum EditorTool: String, CaseIterable {
     let directories: WorkspaceDirectories
     lazy var iCloudFiles = ICloudFiles(root: repository.root, preferences: preferences)
     lazy var clipboardPastes = ClipboardPasteCoordinator(store: self)
+    lazy var clipboardMoves = ClipboardMoveCoordinator(store: self)
     private var notebookSessions: [String: NotebookSession] = [:]
     private var textSessions: [String: TextFileSession] = [:]
     private var referenceStamps: [String: String] = [:]
@@ -91,19 +92,41 @@ enum EditorTool: String, CaseIterable {
     let formatting = TextFormatting()
     var cloud: CloudSync?
     private var saveTask: Task<Void, Never>?
+    private var persistedWorkspace: Workspace?
+    private var persistedStamp: WorkspaceDiskStamp?
+    private struct WorkspaceDiskStamp: Equatable {
+        let modified: Date?
+        let size: UInt64?
+        let inode: UInt64?
+    }
+    private func diskStamp() -> WorkspaceDiskStamp? {
+        guard let values = try? FileManager.default.attributesOfItem(atPath: repository.workspaceURL.path) else { return nil }
+        return WorkspaceDiskStamp(modified: values[.modificationDate] as? Date,
+                                  size: (values[.size] as? NSNumber)?.uint64Value,
+                                  inode: (values[.systemFileNumber] as? NSNumber)?.uint64Value)
+    }
+    func persistWorkspace(_ value: Workspace) throws {
+        if value == persistedWorkspace, let stamp = persistedStamp, diskStamp() == stamp { return }
+        try repository.save(value)
+        persistedWorkspace = value; persistedStamp = diskStamp()
+    }
     private let preferences: UserDefaults
     private var fontUndoGroup: (noteID: UUID, blockID: UUID, revision: UUID, range: NSRange?, date: Date)?
     fileprivate struct HistoryEntry: Codable, Sendable {
         var notes: [Note]
         var selection: UUID?
-        init(_ notes: [Note], selection: UUID?) { self.notes = notes; self.selection = selection }
+        var moveReceiptID: UUID?
+        init(_ notes: [Note], selection: UUID?, moveReceiptID: UUID? = nil) {
+            self.notes = notes; self.selection = selection; self.moveReceiptID = moveReceiptID
+        }
         init(from decoder: Decoder) throws {
             let single = try decoder.singleValueContainer()
             if let old = try? single.decode(Note.self) { self.init([old],selection:old.id); return }
             let c = try decoder.container(keyedBy:CodingKeys.self)
-            self.init(try c.decode([Note].self,forKey:.notes),selection:try c.decodeIfPresent(UUID.self,forKey:.selection))
+            self.init(try c.decode([Note].self,forKey:.notes),selection:try c.decodeIfPresent(UUID.self,forKey:.selection),
+                      moveReceiptID:try c.decodeIfPresent(UUID.self,forKey:.moveReceiptID))
         }
-        private enum CodingKeys: String, CodingKey { case notes, selection }
+        private enum CodingKeys: String, CodingKey { case notes, selection, moveReceiptID }
     }
     private var undoStack: [HistoryEntry] = []
     private var redoStack: [HistoryEntry] = []
@@ -165,9 +188,9 @@ enum EditorTool: String, CaseIterable {
             workspace = existing
             // A canceled background load never writes its migration. Commit only
             // after Bootstrap adopts this prepared library on the main actor.
-            if loaded.needsMigration { try repository.save(existing) }
+            if loaded.needsMigration { try persistWorkspace(existing) }
         }
-        else { workspace = Self.welcome(device); try repository.save(workspace) }
+        else { workspace = Self.welcome(device); try persistWorkspace(workspace) }
         workspace.enforcePurges()
         if let history = loaded.history {
             undoStack = Array(history.undo.suffix(50)); redoStack = Array(history.redo.suffix(50))
@@ -176,6 +199,7 @@ enum EditorTool: String, CaseIterable {
         selection = workspace.notes.first { !$0.isFolder && !$0.deleted }?.id
         if let selection { expandAncestors(of: selection) }
         referenceStamps = loaded.referenceStamps
+        persistedWorkspace = workspace; persistedStamp = diskStamp()
         // Index-only libraries never rebuild working directories.
     }
     var note: Note? { workspace.notes.first { $0.id == selection && !$0.deleted } }
@@ -342,10 +366,14 @@ enum EditorTool: String, CaseIterable {
         return flush()
     }
     func undo() {
+        guard !clipboardMoves.isBusy else { message = "文件移动尚未完成，请稍后撤销。"; return }
         fontUndoGroup = nil; discardPurgedHistory()
         if let id = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: id) { return }
         finishBlockEditing()
         guard saveEditors(), let previous = undoStack.last else { return }
+        if let receipt = previous.moveReceiptID {
+            clipboardMoves.reverse(ClipboardMoveHistoryPlan(receiptID: receipt, notes: previous.notes, selection: previous.selection, redo: false)); return
+        }
         let before = workspace
         var next = workspace
         for note in previous.notes { if let i = next.notes.firstIndex(where: { $0.id == note.id }) { next.notes[i] = restoredVersion(note) } }
@@ -359,10 +387,14 @@ enum EditorTool: String, CaseIterable {
         } catch { message = error.localizedDescription }
     }
     func redo() {
+        guard !clipboardMoves.isBusy else { message = "文件移动尚未完成，请稍后重做。"; return }
         fontUndoGroup = nil; discardPurgedHistory()
         if let id = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: id) { return }
         finishBlockEditing()
         guard saveEditors(), let entry = redoStack.last else { return }
+        if let receipt = entry.moveReceiptID {
+            clipboardMoves.reverse(ClipboardMoveHistoryPlan(receiptID: receipt, notes: entry.notes, selection: entry.selection, redo: true)); return
+        }
         let before = workspace
         var next = workspace
         for note in entry.notes { if let i = next.notes.firstIndex(where: { $0.id == note.id }) { next.notes[i] = restoredVersion(note) } }
@@ -507,10 +539,10 @@ enum EditorTool: String, CaseIterable {
     }
     @discardableResult func flush() -> Bool {
         saveTask?.cancel()
-        do { try repository.save(workspace); saveStatus = "已保存到本机"; cloud?.enqueue(); return true }
+        do { try persistWorkspace(workspace); saveStatus = "已保存到本机"; cloud?.enqueue(); return true }
         catch { saveStatus = "保存失败"; message = error.localizedDescription; return false }
     }
-    func persistSync() throws { try repository.save(workspace) }
+    func persistSync() throws { try persistWorkspace(workspace) }
     func create(folder: Bool = false, parent: UUID? = nil) {
         var note = Note(title: folder ? "新文件夹" : "未命名笔记", parent: parent, folder: folder)
         if let first = workspace.children(parent).compactMap(\.sidebarOrder).min() { note.sidebarOrder = first > Int.min ? first - 1 : first }
@@ -592,7 +624,7 @@ enum EditorTool: String, CaseIterable {
         }
         next.enforcePurges()
         do {
-            try repository.save(next); saveTask?.cancel(); workspace = next
+            try persistWorkspace(next); saveTask?.cancel(); workspace = next
             fontUndoGroup = nil; discardPurgedHistory(); saveHistory()
             do { try purgeHistoricalRecords() }
             catch { message = "页面已清除，但部分旧撤销记录清理失败：" + error.localizedDescription }
@@ -609,7 +641,7 @@ enum EditorTool: String, CaseIterable {
                 var notes = entry.notes.filter { !purged.contains($0.id) }
                 guard !notes.isEmpty else { return nil }
                 for i in notes.indices where notes[i].parentID.map(purged.contains) == true { notes[i].parentID = nil }
-                return HistoryEntry(notes, selection: entry.selection.flatMap { purged.contains($0) ? nil : $0 })
+                return HistoryEntry(notes, selection: entry.selection.flatMap { purged.contains($0) ? nil : $0 }, moveReceiptID: entry.moveReceiptID)
             }
         }
         undoStack = filtered(undoStack); redoStack = filtered(redoStack)
@@ -626,7 +658,7 @@ enum EditorTool: String, CaseIterable {
                     var notes = entry.notes.filter { !purged.contains($0.id) }
                     guard !notes.isEmpty else { return nil }
                     for i in notes.indices where notes[i].parentID.map(purged.contains) == true { notes[i].parentID = nil }
-                    return HistoryEntry(notes, selection: entry.selection.flatMap { purged.contains($0) ? nil : $0 })
+                    return HistoryEntry(notes, selection: entry.selection.flatMap { purged.contains($0) ? nil : $0 }, moveReceiptID: entry.moveReceiptID)
                 }
             }
             history.undo = clean(history.undo); history.redo = clean(history.redo)
@@ -634,6 +666,7 @@ enum EditorTool: String, CaseIterable {
         }
     }
     @discardableResult private func commitHierarchy(_ candidate: Workspace, changed: Set<UUID>, focus: UUID?) -> Bool {
+        guard !clipboardMoves.isBusy else { message = "正在移动文件，请完成后再改名或调整层级。"; return false }
         guard !changed.isEmpty else { return false }
         let before = workspace, previousSelection = selection
         do {
@@ -655,28 +688,91 @@ enum EditorTool: String, CaseIterable {
             next.notes[i].touch(device); next.pending.insert("page_" + next.notes[i].id.uuidString); changed.insert(next.notes[i].id)
         }
         try transaction.execute(at: repository.root)
-        do { try repository.save(next) }
+        do { try persistWorkspace(next) }
         catch {
             if transaction.hasChanges { try transaction.rollback(at: repository.root) }
             throw error
         }
         saveTask?.cancel(); workspace = next; saveStatus = "已保存到本机"
         if transaction.hasChanges {
-            for session in notebookSessions.values {
-                if let path = ReferencePath.relative(session.workingDirectory, inside: repository.root) {
-                    session.workingDirectory = repository.root.appendingPathComponent(transaction.relocated(path))
-                }
-            }
-            // An indexed notebook moved on its own changes its containing directory too.
-            for (id, session) in notebookSessions {
-                if let block = next.notes.lazy.flatMap(\.blocks).first(where: { $0.fileIdentity.uuidString == id }),
-                   let file = attachmentURL(for: block) { session.workingDirectory = file.deletingLastPathComponent() }
-            }
-            referenceStamps = Dictionary(referenceStamps.map { (transaction.relocated($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+            updateActiveFileLocations(transaction.relocated)
             do { try transaction.finish(at: repository.root) }
             catch { message = "文件与索引已保存，移动记录将在下次打开时清理。" }
         }
         cloud?.enqueue(); return changed
+    }
+
+    private func updateActiveFileLocations(_ relocated: (String) -> String) {
+        for session in notebookSessions.values {
+            if let path = ReferencePath.relative(session.workingDirectory, inside: repository.root) {
+                session.workingDirectory = repository.root.appendingPathComponent(relocated(path))
+            }
+        }
+        let current = Dictionary(workspace.notes.flatMap(\.blocks).filter(\.isFilePlugin).map { ($0.fileIdentity.uuidString, $0) }, uniquingKeysWith: { a, _ in a })
+        for (id, session) in notebookSessions {
+            if let block = current[id], let file = attachmentURL(for: block) { session.workingDirectory = file.deletingLastPathComponent() }
+        }
+        referenceStamps = Dictionary(referenceStamps.map { (relocated($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    func isCurrentMoveHistory(_ plan: ClipboardMoveHistoryPlan) -> Bool {
+        (plan.redo ? redoStack.last : undoStack.last)?.moveReceiptID == plan.receiptID
+    }
+    func restoringClipboardHistory(_ plan: ClipboardMoveHistoryPlan) throws -> Workspace {
+        guard isCurrentMoveHistory(plan) else { throw ClipboardMoveCoordinator.changedHistory }
+        var next = workspace
+        for note in plan.notes {
+            if let index = next.notes.firstIndex(where: { $0.id == note.id }) {
+                next.notes[index] = restoredVersion(note)
+                next.notes[index].managedFilePath = note.managedFilePath
+                next.notes[index].managedDirectoryPath = note.managedDirectoryPath
+            }
+        }
+        return next
+    }
+    /// Sources cannot be removed until both the index and its undo receipt are
+    /// durable. This also commits multi-page block moves as one history entry.
+    func commitClipboardWorkspace(_ candidate: Workspace, receiptID: UUID? = nil,
+                                  history plan: ClipboardMoveHistoryPlan? = nil,
+                                  relocatedPaths: [String: String] = [:]) throws {
+        if let plan, !isCurrentMoveHistory(plan) { throw ClipboardMoveCoordinator.changedHistory }
+        let before = workspace, oldUndo = undoStack, oldRedo = redoStack
+        var next = candidate
+        if let receiptID { next.fileMoveTransactionID = receiptID }
+        let originals = Dictionary(before.notes.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var snapshots: [Note] = []
+        for i in next.notes.indices where originals[next.notes[i].id] != next.notes[i] {
+            if let original = originals[next.notes[i].id] { snapshots.append(original) }
+            else {
+                var placeholder = next.notes[i]; placeholder.deleted = true; placeholder.deletedAt = Date(); placeholder.trashBatchID = UUID()
+                snapshots.append(placeholder)
+            }
+            next.notes[i].touch(device); next.pending.insert("page_" + next.notes[i].id.uuidString)
+        }
+        guard !snapshots.isEmpty else { return }
+        let reverse = HistoryEntry(snapshots, selection: selection, moveReceiptID: receiptID)
+        if let plan {
+            if plan.redo { redoStack.removeLast(); undoStack.append(reverse) }
+            else { undoStack.removeLast(); redoStack.append(reverse) }
+        } else { undoStack.append(reverse); undoStack = Array(undoStack.suffix(50)); redoStack = [] }
+        do {
+            try persistWorkspace(next)
+            do { try Repository.writeAtomically(JSONEncoder().encode(History(undo: undoStack, redo: redoStack)), to: historyURL) }
+            catch {
+                // No source has been deleted. Restore the metadata if possible;
+                // all installed transfer copies are retained for recovery.
+                do { try persistWorkspace(before) }
+                catch { workspace = next; saveStatus = "撤销记录未保存，原件已保留"; throw error }
+                throw error
+            }
+        } catch { undoStack = oldUndo; redoStack = oldRedo; throw error }
+        saveTask?.cancel(); workspace = next; saveStatus = "已保存到本机"
+        updateActiveFileLocations { relocatedPaths[$0] ?? $0 }
+        #if os(macOS)
+        PDFWindow.shared.reconcileReaders(store: self)
+        #endif
+        cloud?.enqueue()
+        if let plan { restoreSelection(plan.selection) }
     }
     func insert(_ kind: BlockKind, point: CGPoint? = nil, asset: UUID? = nil, name: String = "") {
         guard let note, !note.isFolder else { return }
@@ -906,9 +1002,8 @@ enum EditorTool: String, CaseIterable {
             }
             if changed { updated.notes[page].touch(device); updated.pending.insert("page_" + updated.notes[page].id.uuidString) }
         }
-        try repository.save(updated); workspace = updated; saveStatus = "已保存到本机"; cloud?.enqueue()
+        try persistWorkspace(updated); workspace = updated; saveStatus = "已保存到本机"; cloud?.enqueue()
         if let path = current.relativeFilePath { referenceStamps[path] = Self.referenceStamp(url) }
-        do { try directories.synchronize(updated) } catch { message = "文件已保存，工作目录整理未完成：" + error.localizedDescription }
     }
     nonisolated private static func referenceStamp(_ url: URL) -> String {
         guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]) else { return "missing" }
@@ -986,14 +1081,12 @@ enum EditorTool: String, CaseIterable {
     /// The agent prepares a complete snapshot first. Publish only after durable saving.
     func commitAgentWorkspace(_ candidate: Workspace, previous: Note?) throws {
         saveTask?.cancel()
-        try repository.save(candidate)
+        try persistWorkspace(candidate)
         workspace = candidate
         if let previous {
             undoStack.append(HistoryEntry([previous],selection:previous.id)); undoStack = Array(undoStack.suffix(50)); redoStack = []; saveHistory()
         }
         saveStatus = "已保存到本机"
-        do { try directories.synchronize(workspace) }
-        catch { message = "资料已保存，工作目录整理稍后重试：" + error.localizedDescription }
         cloud?.enqueue()
     }
 
@@ -1017,12 +1110,10 @@ enum EditorTool: String, CaseIterable {
             placeholders.append(deleted)
             note.touch(device); next.notes.append(note); next.pending.insert("page_" + note.id.uuidString)
         }
-        try repository.save(next)
+        try persistWorkspace(next)
         saveTask?.cancel(); workspace = next
         undoStack.append(HistoryEntry(placeholders, selection: before)); undoStack = Array(undoStack.suffix(50))
         redoStack = []; saveHistory(); saveStatus = "已保存到本机"
-        do { try directories.synchronize(workspace) }
-        catch { message = "场景已保存，文件目录整理稍后重试：" + error.localizedDescription }
         select(catalog.rootID); expandedPages.insert(catalog.rootID); cloud?.enqueue()
     }
     /// Atomically add indexed pages; a single undo trashes only these new pages.
@@ -1052,7 +1143,7 @@ enum EditorTool: String, CaseIterable {
             placeholders.append(placeholder); page.touch(device); next.notes.append(page)
             next.pending.insert("page_" + page.id.uuidString)
         }
-        try repository.save(next); saveTask?.cancel(); workspace = next
+        try persistWorkspace(next); saveTask?.cancel(); workspace = next
         undoStack.append(HistoryEntry(placeholders, selection: priorSelection)); undoStack = Array(undoStack.suffix(50))
         redoStack = []; saveHistory(); saveStatus = "已保存到本机"; cloud?.enqueue()
         if selectInserted, let first = pages.first { select(first.id) }

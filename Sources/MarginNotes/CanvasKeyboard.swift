@@ -22,10 +22,25 @@ extension AppStore {
 }
 @MainActor final class CanvasKeyView: NSView {
     weak var store: AppStore?
+    private var deleteMonitor: Any?
     override var acceptsFirstResponder: Bool { true }
     override func selectAll(_ sender: Any?) { store?.selectAllFocused(in: window) }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let deleteMonitor { NSEvent.removeMonitor(deleteMonitor); self.deleteMonitor = nil }
+        guard window != nil else { return }
+        deleteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            let handled = MainActor.assumeIsolated {
+                guard let self, event.window === self.window else { return false }
+                return self.store?.handleBlockDeleteShortcut(event, in: self.window) == true
+            }
+            return handled ? nil : event
+        }
+    }
+    deinit { if let deleteMonitor { NSEvent.removeMonitor(deleteMonitor) } }
     override func keyDown(with event: NSEvent) {
         if event.charactersIgnoringModifiers?.lowercased() == "a", event.modifierFlags.intersection([.command,.option,.control,.shift]) == .command { selectAll(nil); return }
+        if store?.handleBlockDeleteShortcut(event, in: window) == true { return }
         if [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty {
             store?.deleteSelectedBlock()
         } else if event.keyCode == 53 {

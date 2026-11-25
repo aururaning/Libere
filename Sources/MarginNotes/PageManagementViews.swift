@@ -10,18 +10,26 @@ import MarginCore
     let noteID: UUID
     let title: String
     let commit: (UUID, String) -> Bool
+    var owner: AppStore? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(); field.stringValue = title; field.isBordered = false; field.drawsBackground = false
+    func makeNSView(context: Context) -> CanvasTitleField {
+        let field = CanvasTitleField(); field.stringValue = title; field.isBordered = false; field.drawsBackground = false
         field.focusRingType = .none; field.font = .systemFont(ofSize: 23, weight: .semibold)
         field.delegate = context.coordinator; field.target = context.coordinator; field.action = #selector(Coordinator.submit)
+        field.titleOwner = owner; field.titlePageID = noteID
+        field.finishForCanvas = { [weak coordinator = context.coordinator, weak field] in
+            guard let coordinator, let field else { return true }
+            return coordinator.finishForCanvas(field)
+        }
         field.setAccessibilityLabel("页面标题，回车保存"); return field
     }
-    func updateNSView(_ field: NSTextField, context: Context) {
+    func updateNSView(_ field: CanvasTitleField, context: Context) {
         context.coordinator.parent = self
-        if !context.coordinator.editing && (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = title }
+        field.titleOwner = owner; field.titlePageID = noteID
+        if !context.coordinator.editing && !context.coordinator.rejectedDraft
+            && (field.currentEditor() as? NSTextView)?.hasMarkedText() != true { field.stringValue = title }
     }
-    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
+    static func dismantleNSView(_ field: CanvasTitleField, coordinator: Coordinator) {
         guard coordinator.editing else { return }
         if let editor = field.currentEditor() as? NSTextView { editor.unmarkText(); field.stringValue = editor.string }
         coordinator.save(field)
@@ -30,6 +38,8 @@ import MarginCore
         var parent: PageTitleField
         var editing = false
         var baseline: String
+        var rejectedDraft = false
+        private var saving = false
         init(_ parent: PageTitleField) { self.parent = parent; baseline = parent.title }
         func controlTextDidBeginEditing(_ notification: Notification) { editing = true; baseline = parent.title }
         func controlTextDidEndEditing(_ notification: Notification) {
@@ -37,15 +47,27 @@ import MarginCore
             editing = false
         }
         @objc func submit(_ field: NSTextField) { save(field) }
-        func save(_ field: NSTextField) {
-            guard (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+        @discardableResult func save(_ field: NSTextField, finishComposition: Bool = false) -> Bool {
+            guard !saving else { return true }
+            saving = true; defer { saving = false }
+            if finishComposition, let editor = field.currentEditor() as? NSTextView {
+                editor.unmarkText(); field.stringValue = editor.string
+            }
+            guard (field.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return false }
             let draft = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard draft != baseline else { return }
-            if parent.commit(parent.noteID, draft) { field.stringValue = draft; baseline = draft }
+            guard draft != baseline else { rejectedDraft = false; return true }
+            guard parent.commit(parent.noteID, draft) else { rejectedDraft = true; return false }
+            field.stringValue = draft; baseline = draft; rejectedDraft = false; return true
+        }
+        func finishForCanvas(_ field: NSTextField) -> Bool {
+            let accepted = save(field, finishComposition: true)
+            if accepted { editing = false }
+            return accepted
         }
         func control(_ control: NSControl, textView: NSTextView, doCommandBy command: Selector) -> Bool {
             if command == #selector(NSResponder.cancelOperation(_:)), let field = control as? NSTextField {
-                field.stringValue = parent.title; editing = false; field.window?.makeFirstResponder(nil); return true
+                field.stringValue = parent.title; baseline = parent.title; rejectedDraft = false; editing = false
+                field.window?.makeFirstResponder(nil); return true
             }
             return false
         }
@@ -56,6 +78,7 @@ import MarginCore
     let noteID: UUID
     let title: String
     let commit: (UUID, String) -> Bool
+    var owner: AppStore? = nil
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     func makeUIView(context: Context) -> UITextField {
         let field = UITextField(); field.text = title; field.font = .systemFont(ofSize: 23, weight: .semibold)

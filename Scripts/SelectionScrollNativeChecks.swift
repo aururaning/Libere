@@ -38,15 +38,18 @@ import SwiftUI
           "Selection transfers scrolling into the native introduction editor")
     check(window.firstResponder === text, "Wheel routing preserves the native editor focus and composition target")
     for direction in [-1.0, 1.0] {
+        outer.contentView.scroll(to: CGPoint(x: 0, y: 900)); outer.reflectScrolledClipView(outer.contentView)
+        let outerAtBoundary = outer.contentView.bounds.origin
         var end = inner.contentView.bounds; end.origin.y = direction < 0 ? 100_000 : 0
         inner.contentView.scroll(to: inner.contentView.constrainBoundsRect(end).origin); inner.reflectScrolledClipView(inner.contentView)
         let boundary = inner.contentView.bounds.origin
         for _ in 0..<8 {
             check(marker.routeScroll(at: point(), in: window, delta: CGSize(width: 0, height: 80 * direction), precise: true),
-                  "Selected introduction consumes repeated wheel and momentum samples at a boundary")
+                  "Selected introduction hands repeated boundary wheel samples to its outer page")
         }
-        check(inner.contentView.bounds.origin == boundary && outer.contentView.bounds.origin == outerBefore,
-              "Neither top nor bottom can chain into the folder page")
+        check(inner.contentView.bounds.origin == boundary
+              && (direction < 0 ? outer.contentView.bounds.minY > outerAtBoundary.y : outer.contentView.bounds.minY < outerAtBoundary.y),
+              "Both directional boundaries chain to the folder page without changing inner selection or position")
     }
     store.folderBlockSelection = nil
     check(marker.routeScroll(at: point(), in: window, delta: CGSize(width: 0, height: -40), precise: false)

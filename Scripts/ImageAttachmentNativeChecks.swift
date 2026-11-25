@@ -177,7 +177,8 @@ import UniformTypeIdentifiers
     }
     guard let imageViewport else { preconditionFailure("The loaded image must create an attachment paper viewport") }
     imageViewport.layoutSubtreeIfNeeded(); imageViewport.host.layoutSubtreeIfNeeded()
-    check(abs(imageViewport.paper.frame.width - 300) < 1 && abs(imageViewport.paper.frame.height - 9000.0 / 256 * 300) < 1,
+    let renderedImagePaper = imageViewport.paper.convert(imageViewport.paper.bounds, to: host)
+    check(abs(renderedImagePaper.width - 300) < 1 && abs(renderedImagePaper.height - 9000.0 / 256 * 300) < 1,
           "The native image preview preserves its long aspect ratio rather than cropping or stretching")
     let scrollOrigin = imageViewport.contentView.bounds.origin
     check(imageViewport.scrollPaper(delta: CGSize(width: 0, height: -80), precise: true)
