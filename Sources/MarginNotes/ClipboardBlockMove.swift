@@ -63,6 +63,7 @@ enum ClipboardBlockMove {
 extension AppStore {
     #if os(macOS)
     func moveFocused(in window: NSWindow?, pasteboard: NSPasteboard = .general) {
+        if pastePagesFocused(in: window, pasteboard: pasteboard, move: true) { return }
         guard isCanvasPasteWindow(window) else { return }
         guard commitTitleEditing(in: window) else { return }
         let point = canvasPastePoint(in: window)

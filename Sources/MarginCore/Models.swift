@@ -139,6 +139,8 @@ public struct Note: Identifiable, Codable, Equatable, Sendable {
     /// do not acquire ownership of another page's source file.
     public var managedDirectoryPath: String?
     public var managedFilePath: String?
+    /// A copied page/folder keeps a library-local jump to its original page.
+    public var sourceNoteID: UUID?
     public var paper = PaperKind.continuous
     /// Continuous canvases use document coordinates, independent of the current zoom.
     /// Optional dimensions preserve compatibility with existing notebooks and backups.

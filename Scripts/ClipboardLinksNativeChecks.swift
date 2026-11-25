@@ -36,6 +36,21 @@ import UniformTypeIdentifiers
     check(store.note?.ink == Data([1,2,3]),"Clipboard insertion leaves page handwriting untouched")
     store.undo(); check(store.note?.blocks == [text,formula,child],"One undo removes the complete pasted group")
     store.redo(); check(store.note?.blocks.count == 6,"One redo restores the complete group")
+    for original in [text, formula] {
+        store.selectBlock(original.id)
+        let beforeCopy = store.note!.blocks
+        store.copyFocused()
+        let copied = try JSONDecoder().decode(CanvasClipboard.self, from: NSPasteboard.general.data(forType: CanvasPasteboardContents.canvasBlocks)!)
+        check(copied.blocks.first?.id == original.id && store.note?.blocks == beforeCopy,
+              "Command-C copies ordinary text/formula blocks without removing their source")
+        store.cutFocused()
+        check(store.note?.blocks.contains(where: { $0.id == original.id }) == false,
+              "Command-X cuts ordinary block contents")
+        check(store.pasteReference() && store.block?.text == original.text,
+              "Command-V pastes the copied or cut ordinary block contents")
+        store.undo(); store.undo()
+        check(store.note?.blocks == beforeCopy, "Text cut and paste keep their normal undo steps")
+    }
     store.selectBlock(text.id); store.editBlock(text.id) { $0.locked = true }
     let lockedCount = store.note!.blocks.count
     store.cutFocused(); check(store.note!.blocks.count == lockedCount,"Cut cannot delete locked selections")
@@ -45,6 +60,10 @@ import UniformTypeIdentifiers
     let indexed = store.block!, fileData = try store.clipboardData(for:[indexed.id])
     check(store.pasteBlocks(fileData),"File blocks can be copied as references")
     check(store.block?.relativeFilePath == "original.md" && store.block?.fileIdentity == indexed.fileIdentity,"File copies share the same original path and identity")
+    let beforeFileCut = store.workspace
+    store.cutFocused()
+    check(store.workspace == beforeFileCut && !store.canCutFocused,
+          "File blocks use Command-C/Command-V/Command-Option-V; Command-X cannot remove them")
     check(!FileManager.default.fileExists(atPath:store.repository.assets.path),"Clipboard and indexing never create attachment copies")
     let other = try AppStore(root:root.appendingPathComponent("OtherLibrary")); other.create(); other.cancelRename()
     let beforeRejected = other.workspace

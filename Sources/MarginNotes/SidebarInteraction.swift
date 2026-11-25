@@ -106,7 +106,24 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
     @ViewBuilder let content: () -> Content
     @ViewState private var height: CGFloat = 28
     var body: some View {
-        content().frame(minHeight:28).contentShape(Rectangle())
+        #if os(macOS)
+        SidebarNativeRow(store: store, pageID: note.id, content: AnyView(rowContent)).frame(height: 30)
+        #else
+        rowContent
+            .onDrag {
+                guard store.renaming == nil else { return NSItemProvider() }
+                store.draggingPageID = note.id; store.pageDropPlacement = nil
+                let provider = NSItemProvider(); provider.suggestedName = note.title
+                provider.registerDataRepresentation(forTypeIdentifier:UTType.liberePage.identifier,visibility:.ownProcess) { completion in
+                    completion(Data(note.id.uuidString.utf8),nil); return nil
+                }
+                return provider
+            }
+            .onDrop(of:PageDropDelegate.supportedTypes,delegate:PageDropDelegate(store:store,target:note.id,height:height))
+        #endif
+    }
+    private var rowContent: some View {
+        content().frame(maxWidth: .infinity, minHeight:28).contentShape(Rectangle())
             .background(GeometryReader { geometry in
                 Color.clear.onAppear { height = geometry.size.height }
                     .onChange(of:geometry.size.height) { _, value in height = value }
@@ -121,16 +138,30 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
                         .padding(.trailing,4).allowsHitTesting(false)
                 }
             }
-            .onDrag {
-                guard store.renaming == nil else { return NSItemProvider() }
-                store.draggingPageID = note.id; store.pageDropPlacement = nil
-                let provider = NSItemProvider(); provider.suggestedName = note.title
-                provider.registerDataRepresentation(forTypeIdentifier:UTType.liberePage.identifier,visibility:.ownProcess) { completion in
-                    completion(Data(note.id.uuidString.utf8),nil); return nil
-                }
-                return provider
+    }
+}
+
+@MainActor struct SidebarRootRow: View {
+    @ObservedObject var store: AppStore
+    private var label: some View {
+        HStack {
+            Label("知识库", systemImage: "folder")
+            Spacer()
+            if store.draggingPageID != nil { Text("拖到这里移至根目录").font(.caption2) }
+        }.font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 28)
+            .contentShape(Rectangle())
+            .background(store.pageDropPlacement == .inside(nil) ? Palette.accent.opacity(0.13) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contextMenu {
+                Button("粘贴页面或文件夹到根目录") { store.pastePages(into: nil) }
+                Button("移动到根目录") { store.pastePages(into: nil, move: true) }
             }
-            .onDrop(of:PageDropDelegate.supportedTypes,delegate:PageDropDelegate(store:store,target:note.id,height:height))
+    }
+    var body: some View {
+        #if os(macOS)
+        SidebarNativeRow(store: store, pageID: nil, content: AnyView(label)).frame(height: 30)
+        #else
+        label.onDrop(of: [.liberePage], delegate: PageDropDelegate(store: store, target: nil, height: 28))
+        #endif
     }
 }
 
@@ -202,7 +233,6 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
             guard let self, let store = self.store, event.window === self.window else { return event }
             if event.type == .leftMouseDown {
                 store.sidebarHasFocus = self.bounds.contains(self.convert(event.locationInWindow,from:nil))
-                store.draggingPageID = nil; store.pageDropPlacement = nil
                 return event
             }
             if event.keyCode == 48 { store.sidebarHasFocus = false; return event }
@@ -215,6 +245,17 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
               store.workspace.notes.contains(where: { $0.id == selected && !$0.deleted }),
               window?.firstResponder as? NSTextInputClient == nil else { return false }
         let flags = event.modifierFlags.intersection([.command,.shift,.option,.control])
+        if event.charactersIgnoringModifiers?.lowercased() == "c", flags == .command {
+            if !store.sidebarRootSelected { _ = store.copyPage(selected) }; return true
+        }
+        if event.charactersIgnoringModifiers?.lowercased() == "x", flags == .command {
+            return true // Sidebar files/pages move with Command-Option-V.
+        }
+        if event.charactersIgnoringModifiers?.lowercased() == "v" {
+            if flags == .command { store.pasteFocused(in: window); return true }
+            if flags == [.command, .option] { store.moveFocused(in: window); return true }
+        }
+        guard !store.sidebarRootSelected else { return false }
         if [51,117].contains(event.keyCode), flags == .command { store.requestTrash(selected); return true }
         if [36,76].contains(event.keyCode), flags.isEmpty { store.beginRename(selected); return true }
         return false

@@ -24,3 +24,12 @@
 - 日志：.build/validation/check-0.7.2-build30.log、native-0.7.2-build30.log、build-mac-0.7.2-build30.log；来源指纹：build30-source-manifest.json。
 
 补充拖柄用例的首轮断言错误地要求撤销后仍保留块选择；改为核对原页面中同一块的持久位置后，完整回归通过。三指拖移使用AppKit事件链验证，没有物理触控板手感测试；授权目录选择、真实iCloud跨设备及live HTTP/MCP不计入通过项。
+
+
+## 同版本补充：build 31（2026-11-25）
+
+196 XCTest、2166项优化编译原生断言、18桥接测试及macOS/iPad Simulator/iPad device SDK构建通过。8个新增核心用例覆盖深层页面复制、文件身份和最新路径、锚点/内部链接、命名、来源链、失效/循环输入与兼容解码。侧栏剪贴板32项原生断言覆盖实际LibraryView中的原生行、整树复制、物理移动、活动编辑器、文件别名、根目录粘贴、拒绝⌘X与历史写入失败回退；原侧栏34项回归继续通过。普通文字/公式的⌘C、⌘X、⌘V及文件块拒绝⌘X另有9项新增回归。
+
+实际窗口完成了整棵文件夹复制、子页展开和整组撤销。用户确认侧栏拖入成功；在隔离候选库中核对了源文件夹从根目录移入目标文件夹，子页身份/层级保留、真实目录同步移动且旧目录消失。最终代码进一步固定拖放来源对象生命周期，并按用户最后确认统一快捷键。后续窗口抓取受ScreenCaptureKit错误影响，不把失败的抓取记为成功验收；没有声称覆盖所有触控板型号或每种手势。
+
+证据：check-0.7.2-build31.log、native-0.7.2-build31.log、build-mac-0.7.2-build31.log、page-clipboard-core-build31.log、sidebar-clipboard-build31.log、sidebar-ui-build31.json和build31-source-manifest.json。所有新增功能测试使用隔离资料库；未操作正式资料库，未替换运行应用。

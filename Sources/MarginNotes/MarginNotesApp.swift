@@ -31,6 +31,7 @@ typealias ViewState<Value> = SwiftUI.State<Value>
         .commands {
             CommandGroup(replacing: .pasteboard) {
                 Button("剪切") { bootstrap.store?.cutFocused() }.keyboardShortcut("x", modifiers: .command)
+                    .disabled(bootstrap.store?.canCutFocused != true)
                 Button("复制") { bootstrap.store?.copyFocused() }.keyboardShortcut("c", modifiers: .command)
                 Button("粘贴") { bootstrap.store?.pasteFocused() }.keyboardShortcut("v", modifiers: .command)
                 Button("移动到这里") { bootstrap.store?.moveFocused() }.keyboardShortcut("v", modifiers: [.command, .option])

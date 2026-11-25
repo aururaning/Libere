@@ -21,6 +21,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
     static func main() async throws {
         precondition(Bundle.main.bundleIdentifier == "app.marginnotes.nativechecks", "Run through Scripts/check-native.sh so PencilKit has a bundle identifier")
         if CommandLine.arguments.contains("--sidebar-only") { _ = try runSidebarNativeChecks(); return }
+        if CommandLine.arguments.contains("--sidebar-clipboard-only") { _ = try await runSidebarClipboardNativeChecks(); _ = try await runSidebarNestingNativeChecks(); return }
         if CommandLine.arguments.contains("--scroll-regions-only") { _ = try await runScrollRegionNativeChecks(); return }
         if CommandLine.arguments.contains("--content-selection-only") { _ = try await runContentSelectionNativeChecks(); return }
         if CommandLine.arguments.contains("--batch-only") { _ = try runCanvasBatchNativeChecks(); return }
@@ -524,6 +525,7 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runTitleCanvasFocusNativeChecks()
         checks += try await runBlockDeleteShortcutNativeChecks()
         checks += try await runSidebarNestingNativeChecks()
+        checks += try await runSidebarClipboardNativeChecks()
         checks += try await runPDFPreviewNativeChecks()
         checks += try await runGenericFileNativeChecks()
         checks += try await runPageManagementNativeChecks()

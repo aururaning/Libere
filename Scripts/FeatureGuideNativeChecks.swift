@@ -11,7 +11,7 @@ import SwiftUI
     let guide = try FeatureGuideCatalog.decode(data)
     check(Set(guide.sections.map(\.id)) == ["start", "canvas", "text", "ink", "pdf", "files", "code", "organize", "find", "selection", "clipboard", "storage", "agent", "recovery"],
           "Guide covers every current functional area without creating library pages")
-    check(guide.topicCount == 56 && guide.sections.allSatisfy { !$0.topics.isEmpty }, "Guide has 56 individually actionable topics in 14 groups")
+    check(guide.topicCount == 57 && guide.sections.allSatisfy { !$0.topics.isEmpty }, "Guide has 57 individually actionable topics in 14 groups")
     check(guide.matchingSections(query: "").count == guide.sections.count, "Empty search keeps the complete contents")
     check(guide.matchingSections(query: "库外").flatMap(\.topics).contains { $0.id == "clipboard.outside" }, "Clipboard archive instructions are discoverable")
     check(guide.matchingSections(query: "无路径").flatMap(\.topics).contains { $0.id == "clipboard.bytes" }, "Raw clipboard image and PDF instructions are discoverable")

@@ -162,14 +162,7 @@ struct NoteTree: Identifiable {
             ScrollViewReader { proxy in
             List(selection: Binding(get: { store.selection }, set: { if let id = $0 { store.select(id) } })) {
                 Section {
-                    HStack {
-                        Label("知识库",systemImage:"folder")
-                        Spacer()
-                        if store.draggingPageID != nil { Text("拖到这里移至根目录").font(.caption2) }
-                    }.font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity,minHeight:28)
-                        .contentShape(Rectangle())
-                        .background(store.pageDropPlacement == .inside(nil) ? Palette.accent.opacity(0.13) : Color.clear,in:RoundedRectangle(cornerRadius:6))
-                        .onDrop(of:[.liberePage],delegate:PageDropDelegate(store:store,target:nil,height:28))
+                    SidebarRootRow(store: store)
                     if store.search.isEmpty {
                         ForEach(sidebarItems, id: \.note.id) { item in
                             PageDragRow(store:store,note:item.note) {
@@ -244,6 +237,11 @@ struct NoteTree: Identifiable {
             }
     }
     @ViewBuilder private func pageActions(_ note: Note) -> some View {
+        Button("复制（⌘C）") { _ = store.copyPage(note.id) }
+        Button("粘贴页面或文件夹到这里（⌘V）") { store.pastePages(into: note.id) }
+        Button("移动到这里（⌘⌥V）") { store.pastePages(into: note.id, move: true) }
+        if note.sourceNoteID != nil { Button("前往原页面") { store.revealPageSource(note.id) } }
+        Divider()
         Button("重命名（Enter）") { store.beginRename(note.id) }
         Button("新建子页面") { store.create(parent: note.id) }
         Button("新建子文件夹") { store.create(folder: true, parent: note.id) }

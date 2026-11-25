@@ -299,6 +299,7 @@ extension AppStore {
         return false
     }
     func pasteFocused(in window: NSWindow?, pasteboard: NSPasteboard = .general) {
+        if pastePagesFocused(in: window, pasteboard: pasteboard) { return }
         let canvas = isCanvasPasteWindow(window)
         let point = canvas ? canvasPastePoint(in: window) : nil
         let targetNote = selection
@@ -343,6 +344,10 @@ extension AppStore {
         #else
         if let responder = currentTextResponder { UIApplication.shared.sendAction(#selector(UIResponderStandardEditActions.copy(_:)), to: responder, from: nil, for: nil); return }
         #endif
+        if sidebarHasFocus {
+            if !sidebarRootSelected, renaming == nil, let selection { _ = copyPage(selection) }
+            return
+        }
         if blockKeyboardFocus { copySelectedBlock(); return }
         #if os(macOS)
         NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
@@ -353,11 +358,25 @@ extension AppStore {
         pasteFocused(in: NSApp?.keyWindow ?? NSApp?.mainWindow)
         #else
         if let responder = currentTextResponder { UIApplication.shared.sendAction(#selector(UIResponderStandardEditActions.paste(_:)), to: responder, from: nil, for: nil); return }
+        if let data = UIPasteboard.general.data(forPasteboardType: Self.pageClipboardType) {
+            _ = pastePageClipboard(data, into: selection); return
+        }
         let point = canvasPastePoint()
         if pasteReference(at: point) { return }
         if let url = UIPasteboard.general.url, url.isFileURL { _ = pasteFileURLs([url], at: point, noteID: selection); return }
         if let text = UIPasteboard.general.string { _ = smartPaste(text, at: point) }
         #endif
+    }
+    var canCutFocused: Bool {
+        #if os(macOS)
+        if let text = (NSApp.keyWindow ?? NSApp.mainWindow)?.firstResponder as? NSTextView { return text.isEditable }
+        if webEditorFocused { return true }
+        #else
+        if currentTextResponder != nil { return true }
+        #endif
+        guard !sidebarHasFocus, blockKeyboardFocus, let note else { return false }
+        let selected = note.blocks.filter { multiSelection.selectedIDs.contains($0.id) }
+        return !selected.isEmpty && selected.allSatisfy { !$0.kind.hasAttachment && !$0.locked }
     }
     func cutFocused() {
         #if os(macOS)
@@ -367,9 +386,11 @@ extension AppStore {
         #else
         if let responder = currentTextResponder { UIApplication.shared.sendAction(#selector(UIResponderStandardEditActions.cut(_:)), to: responder, from: nil, for: nil); return }
         #endif
+        if sidebarHasFocus { return }
         if blockKeyboardFocus {
             let ids = multiSelection.selectedIDs
             guard let note, !note.blocks.contains(where: { ids.contains($0.id) && $0.locked }) else { message = "请先解锁选中的内容，再剪切。"; return }
+            guard !note.blocks.contains(where: { ids.contains($0.id) && $0.kind.hasAttachment }) else { return }
             if copySelectedBlocks(ids) { multiSelection.delete() }
         }
     }

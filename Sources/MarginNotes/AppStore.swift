@@ -51,6 +51,10 @@ enum EditorTool: String, CaseIterable {
     @Published var renaming: UUID?
     @Published var renameDraft = ""
     @Published var sidebarHasFocus = false
+    @Published var sidebarRootSelected = false
+    #if os(macOS)
+    lazy var sidebarDragSession = SidebarDragSession(store: self)
+    #endif
     @Published var draggingPageID: UUID?
     @Published var pageDropPlacement: PagePlacement?
     struct DeletionRequest: Identifiable { let id: UUID }
@@ -206,6 +210,7 @@ enum EditorTool: String, CaseIterable {
     var block: Block? { note?.blocks.first { $0.id == blockSelection } }
     var canUndo: Bool { !undoStack.isEmpty }; var canRedo: Bool { !redoStack.isEmpty }
     func select(_ id: UUID) {
+        sidebarRootSelected = false
         interactingBlockID = nil
         if let folderID = folderOverviewEditingID, !finishFolderOverviewEditing(noteID: folderID) { return }
         finishBlockEditing()
@@ -380,10 +385,11 @@ enum EditorTool: String, CaseIterable {
         do {
             let paths = Dictionary(previous.notes.flatMap(\.blocks).compactMap { block in block.relativeFilePath.map { (block.fileIdentity, $0) } }, uniquingKeysWith: { a, _ in a })
             let directories = Dictionary(previous.notes.compactMap { note in note.managedDirectoryPath.map { (note.id, $0) } }, uniquingKeysWith: { a, _ in a })
-            let changed = try persistHierarchy(next, restoringFilePaths: paths, restoringDirectoryPaths: directories)
-            undoStack.removeLast()
-            redoStack.append(HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection))
-            saveHistory(); restoreSelection(previous.selection)
+            try persistHierarchy(next, restoringFilePaths: paths, restoringDirectoryPaths: directories) { changed in
+                History(undo: Array(undoStack.dropLast()),
+                        redo: redoStack + [HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection)])
+            }
+            restoreSelection(previous.selection)
         } catch { message = error.localizedDescription }
     }
     func redo() {
@@ -401,10 +407,11 @@ enum EditorTool: String, CaseIterable {
         do {
             let paths = Dictionary(entry.notes.flatMap(\.blocks).compactMap { block in block.relativeFilePath.map { (block.fileIdentity, $0) } }, uniquingKeysWith: { a, _ in a })
             let directories = Dictionary(entry.notes.compactMap { note in note.managedDirectoryPath.map { (note.id, $0) } }, uniquingKeysWith: { a, _ in a })
-            let changed = try persistHierarchy(next, restoringFilePaths: paths, restoringDirectoryPaths: directories)
-            redoStack.removeLast()
-            undoStack.append(HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection))
-            saveHistory(); restoreSelection(entry.selection)
+            try persistHierarchy(next, restoringFilePaths: paths, restoringDirectoryPaths: directories) { changed in
+                History(undo: undoStack + [HistoryEntry(before.notes.filter { changed.contains($0.id) }, selection: selection)],
+                        redo: Array(redoStack.dropLast()))
+            }
+            restoreSelection(entry.selection)
         } catch { message = error.localizedDescription }
     }
     private func restoreSelection(_ preferred: UUID?) {
@@ -670,15 +677,18 @@ enum EditorTool: String, CaseIterable {
         guard !changed.isEmpty else { return false }
         let before = workspace, previousSelection = selection
         do {
-            let affected = try persistHierarchy(candidate)
-            undoStack.append(HistoryEntry(before.notes.filter { affected.contains($0.id) }, selection: previousSelection))
-            undoStack = Array(undoStack.suffix(50)); redoStack = []; saveHistory()
+            try persistHierarchy(candidate) { affected in
+                let entry = HistoryEntry(before.notes.filter { affected.contains($0.id) }, selection: previousSelection)
+                return History(undo: Array((undoStack + [entry]).suffix(50)), redo: [])
+            }
             restoreSelection(focus); return true
         } catch { message = error.localizedDescription; return false }
     }
     /// Stage renames, save their index, then retire the path-only recovery journal.
     @discardableResult private func persistHierarchy(_ candidate: Workspace, restoringFilePaths: [UUID: String] = [:],
-                                                    restoringDirectoryPaths: [UUID: String] = [:]) throws -> Set<UUID> {
+                                                    restoringDirectoryPaths: [UUID: String] = [:],
+                                                    history: (Set<UUID>) -> History) throws -> Set<UUID> {
+        let before = workspace
         var next = candidate
         let transaction = try FileHierarchyTransaction.plan(from: workspace, to: &next, root: repository.root,
             restoringFilePaths: restoringFilePaths, restoringDirectoryPaths: restoringDirectoryPaths)
@@ -687,12 +697,20 @@ enum EditorTool: String, CaseIterable {
         for i in next.notes.indices where old[next.notes[i].id] != next.notes[i] {
             next.notes[i].touch(device); next.pending.insert("page_" + next.notes[i].id.uuidString); changed.insert(next.notes[i].id)
         }
+        let nextHistory = history(changed)
         try transaction.execute(at: repository.root)
-        do { try persistWorkspace(next) }
+        do {
+            try persistWorkspace(next)
+            try Repository.writeAtomically(JSONEncoder().encode(nextHistory), to: historyURL)
+        }
         catch {
+            // Restoring the old index keeps a retained path journal in rollback
+            // mode if the physical rollback itself is interrupted.
+            try persistWorkspace(before)
             if transaction.hasChanges { try transaction.rollback(at: repository.root) }
             throw error
         }
+        undoStack = nextHistory.undo; redoStack = nextHistory.redo
         saveTask?.cancel(); workspace = next; saveStatus = "已保存到本机"
         if transaction.hasChanges {
             updateActiveFileLocations(transaction.relocated)
