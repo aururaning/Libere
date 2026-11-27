@@ -1,6 +1,6 @@
-# 当前验证：Libere 0.7.2（build 32）
+# 当前验证：Libere 0.7.3（build 32）
 
-199 项 XCTest、2215 项优化编译原生检查、18 项桥接测试和 Mac SDK 构建通过。随航 Pencil 书写、手指浏览、切换选择与空白取消选择已获用户实测确认，笔迹保存后可重新解码。新增 iCloud 下载状态、文件夹操作、Markdown 控件与公式回归，详见 [VALIDATION-0.7.2.md](VALIDATION-0.7.2.md)。下方保留历史版本记录；后续不再开发或验证原生 iPad 端。
+199 项 XCTest、2215 项优化编译原生检查、18 项桥接测试和 Mac SDK 构建通过。随航 Pencil 书写、手指浏览、切换选择与空白取消选择已获用户实测确认，笔迹保存后可重新解码。新增 iCloud 下载状态、文件夹操作、Markdown 控件与公式回归，详见 [VALIDATION-0.7.3.md](VALIDATION-0.7.3.md)。下方保留历史版本记录；后续不再开发或验证原生 iPad 端。
 
 # 验证记录 · Libere 0.7.1
 

@@ -2,7 +2,7 @@
 
 ## 环境
 
-- Mac 和完整 Xcode。0.7.2 build32 已使用 Xcode 27.2 完成构建；这是已验证环境，不表示所有较早版本均不可用。
+- Mac 和完整 Xcode。0.7.3 build32 已使用 Xcode 27.2 完成构建；这是已验证环境，不表示所有较早版本均不可用。
 - 运行目标为 macOS 14+。后续仅维护 Mac 版，iPad 用作随航输入屏。部分输入行为会按系统版本启用。
 - Python 3，用于工程验证、资源生成和打包脚本。
 - Notebook 执行需要选中的 Python 环境安装 `jupyter_client` 与 `ipykernel`。Agent MCP 桥接器只使用 Python 标准库，要求 Python 3.9+。

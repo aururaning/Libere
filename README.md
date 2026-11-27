@@ -6,7 +6,7 @@
 
 **由 p 人打造的一款个人知识库管理软件！**
 
-[![Version](https://img.shields.io/badge/version-0.7.2-2657c7?style=flat-square)](https://github.com/aururaning/Libere/releases/latest)
+[![Version](https://img.shields.io/badge/version-0.7.3-2657c7?style=flat-square)](https://github.com/aururaning/Libere/releases/latest)
 [![Platform](https://img.shields.io/badge/macOS-14%2B%20(Apple%20Silicon)-111827?style=flat-square&logo=apple&logoColor=white)](https://github.com/aururaning/Libere/releases/latest)
 [![Built With](https://img.shields.io/badge/Swift-SwiftUI%20%2B%20AppKit-F05138?style=flat-square&logo=swift&logoColor=white)](#)
 [![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial-4b5563?style=flat-square)](LICENSE)
@@ -38,7 +38,7 @@ Libere 是一款面向 Mac 的自由画布笔记与知识库应用。支持 **PD
 
 ## 核心功能
 
-当前 **0.7.2 build 32** 修复 iCloud 下载状态、随航 Pencil 与手指触摸、Markdown 按钮和公式显示，并增加子文件夹入口。普通文字和普通块使用 `⌘C / ⌘X / ⌘V`，文件、页面和文件夹使用 `⌘C / ⌘V / ⌘⌥V`；移动同步更新原文件、引用和撤销记录。
+当前 **0.7.3 build 32** 修复 iCloud 下载状态、随航 Pencil 与手指触摸、Markdown 按钮和公式显示，并增加子文件夹入口。普通文字和普通块使用 `⌘C / ⌘X / ⌘V`，文件、页面和文件夹使用 `⌘C / ⌘V / ⌘⌥V`；移动同步更新原文件、引用和撤销记录。
 
 - **自由画布 + 多级批注分支**：文字框（Markdown / 离线 LaTeX 公式）、PDF、代码文件、图片、网页和手写笔迹都能混排在一张纸上；支持多选框选、对齐分布，以及从任意资料引出带连线的批注分支。
 - **库内原件直连**：目前支持本地文件夹与 **iCloud Drive**。库内文件通过“添加文件索引”直接使用原件；外部文件可粘贴后一次性归档。支持安全释放已上传、闲置的 iCloud 本地下载。
@@ -63,9 +63,9 @@ Libere 是一款面向 Mac 的自由画布笔记与知识库应用。支持 **PD
 
 ## 最近更新
 
-最新版本为 **0.7.2（build 32）**，修复 iCloud 已下载却仍等待、随航笔与手指输入、Markdown 编辑/预览及常用公式，完善文件夹入口；保留鼠标位置粘贴、自动分类归档、来源索引和57项功能教程。**0.7.1** 解决了阅读窗口复用、代码放大折行和 Notebook 单格撤销等问题；**0.7.0** 版本新增了 `⌘K` 全局搜索、`[[` 双链、画布多选对齐、Finder 拖拽建索引和回收站清理等完整工作流。
+最新版本为 **0.7.3（build 32）**，修复 iCloud 已下载却仍等待、随航笔与手指输入、Markdown 编辑/预览及常用公式，完善文件夹入口；保留鼠标位置粘贴、自动分类归档、来源索引和57项功能教程。**0.7.1** 解决了阅读窗口复用、代码放大折行和 Notebook 单格撤销等问题；**0.7.0** 版本新增了 `⌘K` 全局搜索、`[[` 双链、画布多选对齐、Finder 拖拽建索引和回收站清理等完整工作流。
 
-👉 查看完整版本变化：[CHANGELOG.md](CHANGELOG.md) · [0.7.2 更新说明](Docs/RELEASE-0.7.2.md) · [0.7.1 更新说明](Docs/RELEASE-0.7.1.md) · [0.7.0 更新说明](Docs/RELEASE-0.7.0.md)
+👉 查看完整版本变化：[CHANGELOG.md](CHANGELOG.md) · [0.7.3 更新说明](Docs/RELEASE-0.7.3.md) · [0.7.2 更新说明](Docs/RELEASE-0.7.2.md) · [0.7.1 更新说明](Docs/RELEASE-0.7.1.md) · [0.7.0 更新说明](Docs/RELEASE-0.7.0.md)
 
 ---
 
