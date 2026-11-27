@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "MarginNotes",
-    platforms: [.macOS(.v14), .iOS(.v17)],
+    platforms: [.macOS(.v14)],
     products: [.library(name: "MarginCore", targets: ["MarginCore"]),
                .executable(name: "Libere", targets: ["MarginNotes"])],
     targets: [.target(name: "MarginCore"),

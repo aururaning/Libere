@@ -10,6 +10,7 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
     let pageID: UUID
     let title: String
     let expanded: Bool
+    var selected = false
     var toggle: () -> Void
     #if os(macOS)
     static let size = CGSize(width: 28, height: 30)
@@ -18,7 +19,7 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
     #endif
     var body: some View {
         #if os(macOS)
-        SidebarDisclosureNative(pageID: pageID, title: title, expanded: expanded, toggle: toggle)
+        SidebarDisclosureNative(pageID: pageID, title: title, expanded: expanded, selected: selected, toggle: toggle)
             .frame(width: Self.size.width, height: Self.size.height)
         #else
         Button(action: toggle) {
@@ -204,20 +205,25 @@ extension UTType { static let liberePage = UTType(exportedAs:"app.marginnotes.pa
     required init?(coder: NSCoder) { fatalError("Use init(frame:)") }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     @objc private func activate() { toggle() }
-    func configure(pageID: UUID, title: String, expanded: Bool, toggle: @escaping () -> Void) {
+    func configure(pageID: UUID, title: String, expanded: Bool, selected: Bool = false, active: Bool = true, toggle: @escaping () -> Void) {
         self.pageID = pageID; self.toggle = toggle
         image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        image?.isTemplate = true
+        contentTintColor = selected ? (active ? .alternateSelectedControlTextColor : .controlTextColor) : .secondaryLabelColor
+        cell?.backgroundStyle = selected && active ? .emphasized : .normal
         let label = (expanded ? "收起" : "展开") + title
         toolTip = label; setAccessibilityLabel(label); setAccessibilityValue(expanded ? "已展开" : "已收起")
         setAccessibilityIdentifier("sidebar-disclosure-" + pageID.uuidString)
     }
 }
 @MainActor struct SidebarDisclosureNative: NSViewRepresentable {
-    let pageID: UUID; let title: String; let expanded: Bool; let toggle: () -> Void
+    let pageID: UUID; let title: String; let expanded: Bool; var selected = false; let toggle: () -> Void
+    @Environment(\.controlActiveState) private var controlActiveState
     func makeNSView(context: Context) -> SidebarDisclosureControl { SidebarDisclosureControl(frame: .zero) }
     func updateNSView(_ view: SidebarDisclosureControl, context: Context) {
-        view.configure(pageID: pageID, title: title, expanded: expanded, toggle: toggle)
+        view.configure(pageID: pageID, title: title, expanded: expanded, selected: selected,
+                       active: controlActiveState != .inactive, toggle: toggle)
     }
 }
 

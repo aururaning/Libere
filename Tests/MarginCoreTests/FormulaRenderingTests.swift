@@ -2,6 +2,39 @@ import XCTest
 @testable import MarginCore
 
 final class FormulaRenderingTests: XCTestCase {
+    func testLinearAlgebraAndTensorExpressionsRenderInsideMarkdownTables() throws {
+        let expressions = [
+            #"\oplus"#, #"\bigoplus"#, #"\odot"#, #"\otimes"#,
+            #"\mathbf{h}_i = \bigoplus_{\ell=0}^{L_{\max}} \mathbf{h}_i^{(\ell)}"#,
+            #"\mathbf{g}_i^{\mathrm{dst}} \odot \mathbf{x}"#,
+            #"\mathrm{SiLU}(\mathbf{u}) \odot \mathbf{v}"#,
+            #"\mathbf{h}_i \otimes_{\mathrm{CG}} Y(\hat{\mathbf{r}}_{ij})"#,
+            #"(\cdot)^\top"#, #"\mathbf{a}^\top\mathbf{b}"#,
+            #"\mathbf{D}^{-1} = \mathbf{D}^\top"#, #"\mathbf{B}^\dagger"#
+        ]
+        for expression in expressions { assertMathML(try Formula.render(expression, display: false)) }
+        let source = "| 运算 | 表达 |\n|---|---|\n" + expressions.enumerated().map { "| \($0.offset) | $\($0.element)$ |" }.joined(separator: "\n")
+        let html = Markdown.body(source)
+        XCTAssertFalse(html.contains("math-error")); XCTAssertEqual(count("<math ", in: html), expressions.count)
+        XCTAssertEqual(count("<td>", in: html), 2 * expressions.count)
+    }
+
+    func testLargeTensorOperatorsKeepTheirLimitsAndIdentifierStyle() throws {
+        for name in ["bigoplus", "bigotimes", "bigodot", "biguplus", "bigsqcup", "bigvee", "bigwedge"] {
+            let result = try Formula.render("\\" + name + #"_{i=0}^{n} x_i"#)
+            XCTAssertTrue(result.contains("<munderover>")); XCTAssertTrue(result.contains("largeop=\"true\"")); assertMathML(result)
+        }
+        XCTAssertTrue(try Formula.render(#"\ell+\hbar"#).contains("<mi>ℓ</mi>"))
+    }
+
+    func testAdditionalFontOperatorAndRelationCommands() throws {
+        for source in [#"\argmax_x \log p(x)"#, #"\mathfrak{g} \oplus \mathscr{F}"#,
+                       #"a \preceq b \parallel c \mapsto d"#, #"A \setminus B \subseteq C"#,
+                       #"\vartheta \thinspace \varrho \enspace \varsigma"#, #"\tr(A)+\rank(B)+\diag(C)"#] {
+            assertMathML(try Formula.render(source))
+        }
+    }
+
     private func count(_ token: String, in text: String) -> Int { text.components(separatedBy: token).count - 1 }
     private func assertMathML(_ text: String, file: StaticString = #filePath, line: UInt = #line) {
         XCTAssertTrue(XMLParser(data: Data(text.utf8)).parse(), "Malformed MathML: " + text, file: file, line: line)

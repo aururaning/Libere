@@ -78,6 +78,36 @@ import MarginCore
     }
 }
 
+@MainActor private final class CanvasTouchSelection: NSObject, NSGestureRecognizerDelegate {
+    weak var viewport: CanvasScrollView?
+    let gesture = NSClickGestureRecognizer()
+    init(viewport: CanvasScrollView) {
+        self.viewport = viewport; super.init()
+        gesture.target = self; gesture.action = #selector(tapped(_:)); gesture.delegate = self
+        gesture.numberOfClicksRequired = 1; gesture.numberOfTouchesRequired = 1
+        gesture.allowedTouchTypes = [.direct]
+        if #available(macOS 27.0, *) { gesture.isCancellableByScrollGesture = true }
+    }
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool { false }
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldReceive touch: NSTouch) -> Bool {
+        guard touch.type == .direct, let viewport else { return false }
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.record("finger-candidate", extra: ["accepted": viewport.acceptsTouchSelection(at: touch.location(in: viewport))])
+        #endif
+        return viewport.acceptsTouchSelection(at: touch.location(in: viewport))
+    }
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: NSGestureRecognizer) -> Bool { true }
+    @objc private func tapped(_ gesture: NSClickGestureRecognizer) {
+        guard gesture.state == .ended, let viewport else { return }
+        let handled = viewport.selectTouch(at: viewport.convert(gesture.location(in: viewport), to: nil), in: viewport.window)
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.record("finger-tap", extra: ["handled": handled, "selected": viewport.pointerInteraction?.selectedBlockID?.uuidString ?? ""])
+        #else
+        _ = handled
+        #endif
+    }
+}
+
 @MainActor final class CanvasScrollView: NSScrollView {
     let paper = CanvasDocumentView()
     let host = NSHostingView(rootView: AnyView(EmptyView()))
@@ -97,6 +127,7 @@ import MarginCore
     private var magnificationEndTask: Task<Void, Never>?
     var didZoom: (Double) -> Void = { _ in }
     var didChangeVisibleRect: ((UUID, CGRect) -> Void)?
+    private lazy var touchSelection = CanvasTouchSelection(viewport: self)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -109,7 +140,13 @@ import MarginCore
         horizontalScrollElasticity = .none; verticalScrollElasticity = .none
         automaticallyAdjustsContentInsets = false; contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
         minMagnification = 0.25; maxMagnification = 6; allowsMagnification = true
+        if #available(macOS 27.0, *) {
+            // A touch interaction in one child editor must not block the next
+            // finger tap on blank paper or a different block.
+            exclusiveGestureBehavior = .notExclusive
+        }
         host.sizingOptions = []; paper.addSubview(host); documentView = paper
+        addGestureRecognizer(touchSelection.gesture)
         contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(reportVisibleRect), name: NSView.boundsDidChangeNotification, object: contentView)
         NotificationCenter.default.addObserver(self, selector: #selector(startMagnifying), name: NSScrollView.willStartLiveMagnifyNotification, object: self)
@@ -134,6 +171,22 @@ import MarginCore
     }
     @objc private func windowLostFocus(_ notification: Notification) {
         if notification.object as? NSWindow === window { pointerInteraction?.cancel() }
+    }
+    fileprivate func acceptsTouchSelection(at point: NSPoint) -> Bool {
+        guard pointerInteraction?.allowsTouchSelection == true, let window,
+              SelectionWheel.owns(convert(point, to: nil), in: window, scroll: self), let root = window.contentView else { return false }
+        let windowPoint = convert(point, to: nil)
+        var hit = root.hitTest(root.superview?.convert(windowPoint, from: nil) ?? windowPoint)
+        while let view = hit, view !== self {
+            if view is NSControl || view is PageAnnotationPointerView { return false }
+            hit = view.superview
+        }
+        return true
+    }
+    @discardableResult func selectTouch(at windowPoint: NSPoint, in eventWindow: NSWindow?) -> Bool {
+        guard eventWindow === window, acceptsTouchSelection(at: convert(windowPoint, from: nil)),
+              CanvasTitleEditing.commit(in: window, interaction: pointerInteraction) else { return false }
+        return pointerInteraction?.selectFromTouch(at: paper.convert(windowPoint, from: nil)) == true
     }
     private func updatePointerMonitor() {
         guard pointerInteraction != nil || routesMagnification, window != nil else {

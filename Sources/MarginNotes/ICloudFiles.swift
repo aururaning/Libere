@@ -1,4 +1,5 @@
 import SwiftUI
+import Darwin
 #if SWIFT_PACKAGE
 import MarginCore
 #endif
@@ -74,34 +75,61 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     var uploading = false
     var downloading = false
     var conflicts = false
+    var downloadStateKnown = true
     var accessDate: Date?
     var modifiedDate: Date?
     var error: String?
-    var canEvict: Bool { ubiquitous && local && current && regular && uploaded && !uploading && !downloading && !conflicts && error == nil }
+    var canEvict: Bool { ubiquitous && local && current && regular && uploaded && downloadStateKnown && !uploading && !downloading && !conflicts && error == nil }
     static func read(_ url: URL) throws -> Self {
-        let values = try url.resourceValues(forKeys: [.isUbiquitousItemKey, .isRegularFileKey,
+        // These checks run off the main thread, where NSURL does not clear its
+        // resource cache on the next main run-loop pass. Each poll must be fresh.
+        var inspectedURL = url
+        inspectedURL.removeAllCachedResourceValues()
+        let values = try inspectedURL.resourceValues(forKeys: [.isUbiquitousItemKey, .isRegularFileKey,
             .ubiquitousItemDownloadingStatusKey, .ubiquitousItemIsUploadedKey, .ubiquitousItemIsUploadingKey,
             .ubiquitousItemIsDownloadingKey, .ubiquitousItemHasUnresolvedConflictsKey,
             .ubiquitousItemDownloadingErrorKey, .ubiquitousItemUploadingErrorKey,
             .contentAccessDateKey, .contentModificationDateKey])
-        let cloud = values.isUbiquitousItem == true
-        let status = values.ubiquitousItemDownloadingStatus
-        return Self(ubiquitous: cloud,
-            local: cloud ? status == .current || status == .downloaded : FileManager.default.fileExists(atPath: url.path),
-            current: status == .current, regular: values.isRegularFile == true,
-            uploaded: values.ubiquitousItemIsUploaded == true,
-            // Unknown safety metadata must never authorize eviction.
-            uploading: values.ubiquitousItemIsUploading != false,
-            downloading: cloud && values.ubiquitousItemIsDownloading != false,
-            conflicts: values.ubiquitousItemHasUnresolvedConflicts != false,
-            accessDate: values.contentAccessDate, modifiedDate: values.contentModificationDate,
-            error: (values.ubiquitousItemDownloadingError ?? values.ubiquitousItemUploadingError)?.localizedDescription)
+        var materialized: Bool?
+        if values.isUbiquitousItem == true, values.ubiquitousItemDownloadingStatus == nil {
+            // Some File Providers omit the old ubiquity status. Check only the
+            // indexed file's metadata; opening its contents would hydrate it.
+            materialized = inspectedURL.withUnsafeFileSystemRepresentation { path -> Bool? in
+                guard let path else { return nil }
+                var info = stat()
+                guard fstatat(AT_FDCWD, path, &info, 0) == 0 else { return nil }
+                return (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) && (info.st_flags & UInt32(SF_DATALESS)) == 0
+            }
+        }
+        return Self(resourceValues: values, materialized: materialized)
+    }
+}
+
+extension ICloudFileSnapshot {
+    init(resourceValues values: URLResourceValues, materialized: Bool? = nil) {
+        self.init(ubiquitous: values.isUbiquitousItem == true, downloadingStatus: values.ubiquitousItemDownloadingStatus,
+                  downloading: values.ubiquitousItemIsDownloading, regular: values.isRegularFile == true, materialized: materialized)
+        uploaded = values.ubiquitousItemIsUploaded == true
+        // Unknown safety metadata must never authorize eviction.
+        uploading = values.ubiquitousItemIsUploading != false
+        conflicts = values.ubiquitousItemHasUnresolvedConflicts != false
+        accessDate = values.contentAccessDate; modifiedDate = values.contentModificationDate
+        error = (values.ubiquitousItemDownloadingError ?? values.ubiquitousItemUploadingError)?.localizedDescription
+    }
+    init(ubiquitous: Bool, downloadingStatus: URLUbiquitousItemDownloadingStatus?, downloading: Bool?, regular: Bool, materialized: Bool? = nil) {
+        self.init(ubiquitous: ubiquitous,
+            local: ubiquitous ? downloadingStatus == .current || downloadingStatus == .downloaded || (downloadingStatus == nil && materialized == true) : regular,
+            current: downloadingStatus == .current, regular: regular,
+            downloading: ubiquitous && downloading == true, downloadStateKnown: downloading != nil)
     }
 }
 
 @MainActor final class ICloudFiles: ObservableObject {
     enum Availability: Equatable {
         case checking, local, remote, downloading, releasing, failed(String), unavailable(String)
+        var needsObservation: Bool {
+            switch self { case .checking, .remote, .downloading, .failed: return true; default: return false }
+        }
     }
     static let inactivity: TimeInterval = 7 * 24 * 60 * 60
     @Published private var states: [String: Availability] = [:]
@@ -117,6 +145,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     private var accessDirty = false
     private var leases: [String: Set<UUID>] = [:]
     private var downloadTasks: [String: Task<Void, Never>] = [:]
+    private var refreshRequests: [String: UUID] = [:]
     private var cloudPaths: Set<String> = []
     private var prefetchTask: Task<Void, Never>?
     private var sweepRunning = false
@@ -199,17 +228,33 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     }
     func refresh(_ url: URL) async {
         guard let path = path(for: url), states[path] != .releasing else { return }
+        let request = UUID(); refreshRequests[path] = request
         let inspect = inspect
         let result = await Task.detached { Result { try inspect(url) } }.value
-        guard !Task.isCancelled, states[path] != .releasing else { return }
+        guard !Task.isCancelled, states[path] != .releasing, refreshRequests[path] == request else { return }
+        refreshRequests.removeValue(forKey: path)
         switch result {
         case .success(let value):
             if value.ubiquitous { cloudPaths.insert(path) } else { cloudPaths.remove(path) }
             if value.local { states[path] = .local }
             else if let error = value.error { states[path] = .failed(error) }
-            else if value.ubiquitous { states[path] = value.downloading || downloadTasks[path] != nil ? .downloading : .remote }
+            else if value.ubiquitous {
+                if !value.downloading, downloadTasks[path] == nil, case .failed = states[path] ?? .checking { return }
+                states[path] = value.downloading || downloadTasks[path] != nil ? .downloading : .remote
+            }
             else { states[path] = .unavailable("找不到原文件，请确认文件位置；本地文件不会从 iCloud 自动恢复。") }
         case .failure(let error): states[path] = .unavailable(error.localizedDescription)
+        }
+    }
+    /// A visible waiting preview also notices downloads started in Finder and
+    /// completions after an earlier error. It stops polling once content is local.
+    func watch(_ url: URL, includeRemote: Bool = true) async {
+        while !Task.isCancelled {
+            await refresh(url)
+            let state = availability(of: url)
+            guard state == .downloading || (includeRemote && state.needsObservation) else { return }
+            do { try await Task.sleep(nanoseconds: 1_000_000_000) }
+            catch { return }
         }
     }
     func download(_ url: URL) {
@@ -220,7 +265,9 @@ struct ICloudFileSnapshot: Equatable, Sendable {
             defer { self?.downloadTasks.removeValue(forKey: path) }
             do {
                 try await Task.detached {
-                    guard try inspect(url).ubiquitous else { throw CocoaError(.ubiquitousFileUnavailable) }
+                    let state = try inspect(url)
+                    if state.local { return }
+                    guard state.ubiquitous else { throw CocoaError(.ubiquitousFileUnavailable) }
                     try start(url)
                 }.value
                 // Poll metadata only; never read the file to force an implicit download.
@@ -231,8 +278,14 @@ struct ICloudFileSnapshot: Equatable, Sendable {
                     if case .failed = self.availability(of: url) { return }
                     try await Task.sleep(nanoseconds: 1_000_000_000)
                 }
-                self?.states[path] = .failed("下载尚未完成，请检查网络后重试。")
-            } catch { self?.states[path] = .failed(error.localizedDescription) }
+                guard !Task.isCancelled, let self else { return }
+                await self.refresh(url)
+                if self.availability(of: url) != .local { self.states[path] = .failed("下载尚未完成，请检查网络后重试。") }
+            } catch {
+                guard !Task.isCancelled, let self else { return }
+                await self.refresh(url)
+                if self.availability(of: url) != .local { self.states[path] = .failed(error.localizedDescription) }
+            }
         }
     }
     func requireLocal(_ url: URL) throws {
@@ -275,7 +328,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
                   !protectedPaths.contains(path), !isProtected(path), now.timeIntervalSince(lastViewed[path] ?? now) >= Self.inactivity,
                   case .success(let latest) = finalCheck, latest.canEvict,
                   now.timeIntervalSince(max(latest.accessDate ?? .distantPast, latest.modifiedDate ?? .distantPast)) >= Self.inactivity else { continue }
-            states[path] = .releasing
+            refreshRequests.removeValue(forKey: path); states[path] = .releasing
             do {
                 // No actor suspension between the final live protection check and
                 // the OS eviction request: a new in-app editor/kernel cannot start
@@ -325,7 +378,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
             let second = await Task.detached { Result { try inspect(url) } }.value
             guard !Task.isCancelled, case .success(let latest) = second, latest.canEvict,
                   leases[path] == nil, downloadTasks[path] == nil, !isProtected(path) else { kept += 1; continue }
-            states[path] = .releasing
+            refreshRequests.removeValue(forKey: path); states[path] = .releasing
             do { try evict(url); states[path] = .remote; cloudPaths.insert(path); released += 1 }
             catch { states[path] = .failed(error.localizedDescription); kept += 1 }
         }
@@ -339,12 +392,18 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     }
 }
 
+private struct ICloudObservation: Equatable {
+    let url: URL?
+    let pending: Bool
+}
+
 @MainActor struct ICloudFileGate<Content: View>: View {
     @ObservedObject var files: ICloudFiles
     let url: URL?
     var close: (() -> Void)? = nil
     @ViewBuilder var content: () -> Content
     @ViewState private var token = UUID()
+    @Environment(\.scenePhase) private var scenePhase
     private func buttonTitle(_ url: URL) -> String { if case .failed = files.availability(of: url) { return "重试" }; return "下载文件" }
     var body: some View {
         ZStack {
@@ -365,7 +424,10 @@ struct ICloudFileSnapshot: Equatable, Sendable {
                         Text(url.lastPathComponent).font(.headline).lineLimit(2)
                         if case .failed(let error) = files.availability(of: url) { Text(error).font(.caption).foregroundStyle(.secondary) }
                         else { Text("原文件保存在 iCloud，下载后即可预览。").font(.caption).foregroundStyle(.secondary) }
-                        if case .downloading = files.availability(of: url) { ProgressView("正在下载…") }
+                        if case .downloading = files.availability(of: url) {
+                            ProgressView("正在下载…")
+                            Button("重新检查") { Task { await files.refresh(url) } }
+                        }
                         else { Button(buttonTitle(url)) { files.download(url) }.buttonStyle(.borderedProminent) }
                     }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
@@ -376,14 +438,11 @@ struct ICloudFileSnapshot: Equatable, Sendable {
                 Button("完成", action: close).keyboardShortcut(.cancelAction).padding(10)
             }
         }
-        .task(id: url) {
+        .task(id: ICloudObservation(url: url, pending: url.map { files.availability(of: $0).needsObservation } ?? false)) {
             guard let url else { return }
-            files.retain(url, token: token); await files.refresh(url)
-            while !Task.isCancelled, files.availability(of: url) == .downloading {
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
-                if !Task.isCancelled { await files.refresh(url) }
-            }
+            files.retain(url, token: token); await files.watch(url)
         }
+        .onChange(of: scenePhase) { _, phase in if phase == .active, let url { Task { await files.refresh(url) } } }
         .onChange(of: url) { old, _ in if let old { files.release(old, token: token) } }
         .onDisappear { if let url { files.release(url, token: token) } }
     }
@@ -404,6 +463,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
 @MainActor struct CloudFileBadge: View {
     @ObservedObject var files: ICloudFiles
     let url: URL
+    @Environment(\.scenePhase) private var scenePhase
     private var label: String {
         switch files.availability(of: url) {
         case .checking: return "检查中"
@@ -426,6 +486,7 @@ struct ICloudFileSnapshot: Equatable, Sendable {
     var body: some View {
         Label(label, systemImage: icon).font(.system(size: 9)).foregroundStyle(.secondary)
             .help(label).accessibilityLabel(label)
-            .task(id: url) { await files.refresh(url) }
+            .task(id: ICloudObservation(url: url, pending: files.availability(of: url) == .downloading)) { await files.watch(url, includeRemote: false) }
+            .onChange(of: scenePhase) { _, phase in if phase == .active { Task { await files.refresh(url) } } }
     }
 }

@@ -21,18 +21,21 @@ import MarginCore
                     .gesture(SpatialTapGesture(coordinateSpace: .named("note-paper")).onEnded { store.tapCanvas(at: $0.location) })
                 #endif
                 if block.usesMarkdown && !editing {
-                    Button(interacting ? "拖动模式" : "链接交互") {
+                    CanvasInlineButton(title: interacting ? "拖动模式" : "链接交互",
+                                       label: interacting ? "拖动模式" : "链接交互", identifier: "block-link-mode-" + block.id.uuidString,
+                                       ownerBlockID: block.id) {
                         if interacting { store.interactingBlockID = nil }
                         else {
                             if store.blockSelection != block.id { store.selectBlock(block.id, keyboard: false) }
                             store.interactingBlockID = block.id
                         }
-                    }.help("链接交互允许直接点击预览链接；拖动模式保留正文拖动。")
+                    }.frame(width: 60, height: 28).help("链接交互允许直接点击预览链接；拖动模式保留正文拖动。")
                 }
-                Button(editing ? "预览" : "编辑") {
+                CanvasInlineButton(title: editing ? "预览" : "编辑", label: editing ? "预览" : "编辑",
+                                   identifier: "block-edit-" + block.id.uuidString, ownerBlockID: block.id) {
                     if editing { store.selectBlock(block.id) }
                     else { store.beginBlockEditing(block.id) }
-                }
+                }.frame(width: 44, height: 28)
             }.font(.system(size: 11)).buttonStyle(.plain).padding(.horizontal, 10).frame(height: 30)
             if editing || !block.usesMarkdown {
                 RichTextEditor(block: block, formatting: store.formatting, focus: { store.beginBlockEditing(block.id) },

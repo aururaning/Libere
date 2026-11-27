@@ -4,7 +4,7 @@ public enum FormulaError: LocalizedError {
     case invalid(String)
     public var errorDescription: String? { if case .invalid(let text) = self { return text }; return nil }
 }
-/// Small offline LaTeX subset. Unrecognized commands remain editable and show an explicit error.
+/// Offline LaTeX-to-MathML renderer. Unsupported commands preserve their editable source.
 public enum Formula {
     public static func render(_ source: String, display: Bool = true) throws -> String {
         var text = source.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -131,7 +131,7 @@ private struct Parser {
             return name == "text" ? "<mtext>\(Formula.escape(spaced))</mtext>"
                 : "<mo\(limits ? " movablelimits=\"true\"" : "") mathvariant=\"normal\">\(Formula.escape(plain))</mo>"
         }
-        if let variant = ["mathrm":"normal", "mathbf":"bold", "mathit":"italic", "mathbb":"double-struck", "mathcal":"script", "mathsf":"sans-serif", "mathtt":"monospace", "boldsymbol":"bold-italic", "bm":"bold-italic"][name] {
+        if let variant = ["mathrm":"normal", "mathbf":"bold", "mathit":"italic", "mathbb":"double-struck", "mathcal":"script", "mathscr":"script", "mathfrak":"fraktur", "mathsf":"sans-serif", "mathtt":"monospace", "boldsymbol":"bold-italic", "bm":"bold-italic"][name] {
             return "<mstyle mathvariant=\"\(variant)\">\(try atom())</mstyle>"
         }
         if let mark = ["hat":"^", "widehat":"^", "bar":"¯", "vec":"→", "dot":"˙", "ddot":"¨", "overline":"¯", "tilde":"~", "widetilde":"~"][name] {
@@ -149,17 +149,22 @@ private struct Parser {
             let delimiter = try atom()
             return delimiter.replacingOccurrences(of: "<mo>", with: "<mo fence=\"true\" stretchy=\"true\">")
         }
-        if name == "quad" || name == "qquad" { return "<mspace width=\"\(name == "quad" ? 1 : 2)em\"/>" }
+        if let width = ["quad":"1", "qquad":"2", "enspace":"0.5", "enskip":"0.5", "thinspace":"0.1667", "medspace":"0.2222", "thickspace":"0.2778", "negthinspace":"-0.1667"][name] {
+            return "<mspace width=\"\(width)em\"/>"
+        }
         if name == "begin" { return try matrix() }
         if let symbol = Self.symbols[name] {
+            if ["ell", "hbar", "hslash"].contains(name) { return "<mi>\(symbol)</mi>" }
             if symbol.unicodeScalars.count == 1, let scalar = symbol.unicodeScalars.first, (0x0370...0x03FF).contains(scalar.value) {
                 return "<mi\(name.first?.isUppercase == true ? " mathvariant=\"normal\"" : "")>\(symbol)</mi>"
             }
-            let limits = ["sum", "prod", "coprod", "bigcup", "bigcap"].contains(name)
+            let limits = ["sum", "prod", "coprod", "bigcup", "bigcap", "bigoplus", "bigotimes", "bigodot", "biguplus", "bigsqcup", "bigvee", "bigwedge"].contains(name)
             return "<mo\(limits ? " movablelimits=\"true\" largeop=\"true\"" : "")>\(Formula.escape(symbol))</mo>"
         }
-        if ["lim", "max", "min", "sup", "inf"].contains(name) { return "<mo movablelimits=\"true\" mathvariant=\"normal\">\(name)</mo>" }
-        if ["sin", "cos", "tan", "cot", "sec", "csc", "log", "ln", "exp", "lim", "max", "min", "det", "dim", "sup", "inf"].contains(name) { return "<mi mathvariant=\"normal\">\(name)</mi>" }
+        if let text = ["lim":"lim", "max":"max", "min":"min", "sup":"sup", "inf":"inf", "limsup":"lim sup", "liminf":"lim inf", "argmax":"arg max", "argmin":"arg min"][name] {
+            return "<mo movablelimits=\"true\" mathvariant=\"normal\">\(text)</mo>"
+        }
+        if ["sin", "cos", "tan", "cot", "sec", "csc", "sinh", "cosh", "tanh", "arcsin", "arccos", "arctan", "log", "ln", "exp", "det", "dim", "tr", "Tr", "rank", "diag", "arg", "ker", "hom", "deg", "gcd", "Pr"].contains(name) { return "<mi mathvariant=\"normal\">\(name)</mi>" }
         throw FormulaError.invalid("暂不支持命令 \\\(name)，LaTeX 原文会保留。")
     }
     mutating func matrix() throws -> String {
@@ -209,6 +214,13 @@ private struct Parser {
         "alpha":"α", "beta":"β", "gamma":"γ", "delta":"δ", "epsilon":"ϵ", "varepsilon":"ε", "zeta":"ζ", "eta":"η", "theta":"θ", "iota":"ι", "kappa":"κ", "lambda":"λ", "mu":"μ", "nu":"ν", "xi":"ξ", "pi":"π", "rho":"ρ", "sigma":"σ", "tau":"τ", "upsilon":"υ", "phi":"ϕ", "varphi":"φ", "chi":"χ", "psi":"ψ", "omega":"ω",
         "Gamma":"Γ", "Delta":"Δ", "Theta":"Θ", "Lambda":"Λ", "Xi":"Ξ", "Pi":"Π", "Sigma":"Σ", "Phi":"Φ", "Psi":"Ψ", "Omega":"Ω",
         "sum":"∑", "prod":"∏", "int":"∫", "iint":"∬", "iiint":"∭", "oint":"∮", "infty":"∞", "partial":"∂", "nabla":"∇", "cdot":"⋅", "times":"×", "div":"÷", "pm":"±", "mp":"∓", "le":"≤", "leq":"≤", "ge":"≥", "geq":"≥", "ne":"≠", "neq":"≠", "approx":"≈", "equiv":"≡", "propto":"∝",
-        "to":"→", "rightarrow":"→", "leftarrow":"←", "leftrightarrow":"↔", "Rightarrow":"⇒", "Leftrightarrow":"⇔", "implies":"⇒", "iff":"⇔", "in":"∈", "notin":"∉", "subset":"⊂", "subseteq":"⊆", "supset":"⊃", "supseteq":"⊇", "cup":"∪", "cap":"∩", "bigcup":"⋃", "bigcap":"⋂", "coprod":"∐", "emptyset":"∅", "forall":"∀", "exists":"∃", "neg":"¬", "land":"∧", "lor":"∨", "sim":"∼", "simeq":"≃", "cong":"≅", "ldots":"…", "cdots":"⋯", "vdots":"⋮", "ddots":"⋱", "langle":"⟨", "rangle":"⟩", "lbrace":"{", "rbrace":"}", "vert":"|", "lvert":"|", "rvert":"|", "Vert":"‖", "lVert":"‖", "rVert":"‖"
+        "to":"→", "rightarrow":"→", "leftarrow":"←", "leftrightarrow":"↔", "Rightarrow":"⇒", "Leftrightarrow":"⇔", "implies":"⇒", "iff":"⇔", "in":"∈", "notin":"∉", "subset":"⊂", "subseteq":"⊆", "supset":"⊃", "supseteq":"⊇", "cup":"∪", "cap":"∩", "bigcup":"⋃", "bigcap":"⋂", "coprod":"∐", "emptyset":"∅", "forall":"∀", "exists":"∃", "neg":"¬", "land":"∧", "lor":"∨", "sim":"∼", "simeq":"≃", "cong":"≅", "ldots":"…", "cdots":"⋯", "vdots":"⋮", "ddots":"⋱", "langle":"⟨", "rangle":"⟩", "lbrace":"{", "rbrace":"}", "vert":"|", "lvert":"|", "rvert":"|", "Vert":"‖", "lVert":"‖", "rVert":"‖",
+        "oplus":"⊕", "ominus":"⊖", "otimes":"⊗", "oslash":"⊘", "odot":"⊙", "circ":"∘", "bullet":"∙", "ast":"∗", "star":"⋆", "diamond":"⋄",
+        "bigoplus":"⨁", "bigotimes":"⨂", "bigodot":"⨀", "biguplus":"⨄", "bigsqcup":"⨆", "bigvee":"⋁", "bigwedge":"⋀",
+        "top":"⊤", "bot":"⊥", "perp":"⊥", "intercal":"⊺", "dagger":"†", "ddagger":"‡", "dag":"†", "ddag":"‡", "ell":"ℓ", "hbar":"ℏ", "hslash":"ℏ", "Re":"ℜ", "Im":"ℑ",
+        "vartheta":"ϑ", "varrho":"ϱ", "varsigma":"ς", "varpi":"ϖ", "varkappa":"ϰ", "Upsilon":"Υ",
+        "mid":"∣", "nmid":"∤", "parallel":"∥", "nparallel":"∦", "ll":"≪", "gg":"≫", "lesssim":"≲", "gtrsim":"≳", "prec":"≺", "succ":"≻", "preceq":"≼", "succeq":"≽", "asymp":"≍", "triangleq":"≜", "coloneqq":"≔", "eqqcolon":"≕",
+        "setminus":"∖", "smallsetminus":"∖", "uplus":"⊎", "sqcup":"⊔", "sqcap":"⊓", "nsubseteq":"⊈", "nsupseteq":"⊉", "varnothing":"∅", "nexists":"∄",
+        "mapsto":"↦", "longmapsto":"⟼", "longrightarrow":"⟶", "longleftarrow":"⟵", "longleftrightarrow":"⟷", "Leftarrow":"⇐", "Longrightarrow":"⟹", "Longleftarrow":"⟸", "Longleftrightarrow":"⟺", "uparrow":"↑", "downarrow":"↓", "updownarrow":"↕", "nearrow":"↗", "searrow":"↘", "swarrow":"↙", "nwarrow":"↖"
     ]
 }

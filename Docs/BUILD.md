@@ -2,8 +2,8 @@
 
 ## 环境
 
-- Mac 和完整 Xcode。0.7.1 已使用 Xcode 27.2 完成构建；这是已验证环境，不表示所有较早版本均不可用。
-- 运行目标为 macOS 14+、iPadOS 17+。部分输入行为会按系统版本启用。
+- Mac 和完整 Xcode。0.7.2 build32 已使用 Xcode 27.2 完成构建；这是已验证环境，不表示所有较早版本均不可用。
+- 运行目标为 macOS 14+。后续仅维护 Mac 版，iPad 用作随航输入屏。部分输入行为会按系统版本启用。
 - Python 3，用于工程验证、资源生成和打包脚本。
 - Notebook 执行需要选中的 Python 环境安装 `jupyter_client` 与 `ipykernel`。Agent MCP 桥接器只使用 Python 标准库，要求 Python 3.9+。
 
@@ -60,12 +60,11 @@ PKG 安装目标固定为 `/Applications/Libere.app`，不通过应用标识查�
 
 Mac 本地构建会在签名前将 LICENSE、NOTICE 和 THIRD_PARTY_NOTICES.md 放入应用资源目录，打包时核对它们与源码一致。分发其他方式构建的版本时，也应附带这些许可与声明文件。
 
-## Xcode 与 iPad
+## Xcode 与随航
 
-1. 打开 `MarginNotes.xcodeproj`，选择 `MarginNotes` scheme。
-2. Mac 目的地选择 `My Mac`；iPad 目的地选择相应模拟器。
-3. 在真实 iPad 上运行时，设置自己的签名 Team 和唯一 Bundle Identifier，按 Xcode 提示配置设备。
-4. 使用 CloudKit 时，按 [ICLOUD.md](ICLOUD.md) 配置自己的容器与权限，再选择 `MarginNotes-iCloud` scheme。
+1. 打开 `MarginNotes.xcodeproj`，选择 `MarginNotes` scheme，目的地选择 `My Mac`。
+2. 把 Mac 窗口移到 iPad 随航屏幕，在手写模式下用 Pencil 书写、用手指浏览；选择模式支持触摸切换和取消选择。不再构建或维护原生 iPad 端。
+3. 可选 CloudKit 构建按 [ICLOUD.md](ICLOUD.md) 配置自己的签名容器，再选择 `MarginNotes-iCloud` scheme；iCloud Drive 文件夹不依赖这个容器。
 
 仓库里的应用与 CloudKit 标识是开发默认值；独立分发自己的构建时，应配置自己的签名身份与容器。
 
@@ -84,13 +83,13 @@ bash Scripts/check-core.sh
 bash Scripts/check-native.sh
 ```
 
-SwiftPM XCTest、Python Agent 桥接测试，以及 Mac / iPad Simulator / iPad 设备 SDK 构建：
+SwiftPM XCTest、Python Agent 桥接测试，以及 Mac SDK 构建：
 
 ```bash
 bash Scripts/check.sh
 ```
 
-`check.sh` 需要 Xcode 的 iOS Simulator 与设备 SDK。中间构建数据使用临时目录，检查日志与产物写入 `.build/`。Agent 的真实本机通信可另行执行 `bash Scripts/check-native.sh --test-agent-transport`；Notebook 实际内核检查为 `python3 Scripts/test_notebook_kernel.py`，需要前述 Python 依赖。
+`check.sh` 只要求 Mac SDK。中间构建数据使用临时目录，检查日志与产物写入 `.build/`。Agent 的真实本机通信可另行执行 `bash Scripts/check-native.sh --test-agent-transport`；Notebook 实际内核检查为 `python3 Scripts/test_notebook_kernel.py`，需要前述 Python 依赖。
 
 ## 资源维护
 

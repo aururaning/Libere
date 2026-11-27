@@ -48,8 +48,6 @@ enum Palette {
                 .overlay(alignment: .bottom) {
                     if store.tool == .anchor { Text("点击放置一个批注点，随后自动回到选择 · Esc 取消")
                         .font(.caption).padding(12).background(.regularMaterial, in: Capsule()).padding(16).allowsHitTesting(false) }
-                    if store.tool == .ink { Text("附件内按当前页保存 · 画布批注独立保存 · 手指滚动")
-                        .font(.caption).padding(10).background(.regularMaterial, in: Capsule()).padding(14).allowsHitTesting(false) }
                 }
         }
     }

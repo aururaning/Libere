@@ -18,6 +18,9 @@ import WebKit
     static func observe(store: AppStore) async {
         let args = ProcessInfo.processInfo.arguments
         guard fixtureRoot != nil || (args.contains("--verify-window") && args.contains("--data-dir")) else { return }
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.install(root: store.repository.root)
+        #endif
         let report = store.repository.root.appendingPathComponent("window-check.json")
         var evidence: [String: Any] = ["bundle": Bundle.main.bundleURL.path,
                                        "build": Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") ?? "",

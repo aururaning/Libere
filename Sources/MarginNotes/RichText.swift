@@ -133,7 +133,9 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), font
 @MainActor private func attributed(_ block: Block) -> NSAttributedString {
     if !block.usesMarkdown, let rtf = block.rtf, let result = try? NSAttributedString(data: rtf, options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil) { return result }
     let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 5
-    let font = block.usesMarkdown ? NativeFont.monospacedSystemFont(ofSize: CGFloat(min(block.fontSize, 20)), weight: .regular) : NativeFont.systemFont(ofSize: CGFloat(block.fontSize))
+    let size = CGFloat(min(96, max(10, block.fontSize)))
+    let fallback = block.usesMarkdown && block.fontFamily == nil ? NativeFont.monospacedSystemFont(ofSize: size, weight: .regular) : NativeFont.systemFont(ofSize: size)
+    let font = block.fontFamily.flatMap { $0 == "system" ? NativeFont.systemFont(ofSize: size) : NativeFont(name: $0, size: size) } ?? fallback
     return NSAttributedString(string: block.text, attributes: [.font: font,
         .foregroundColor: NativeColor(white: 0.17, alpha: 1), .paragraphStyle: paragraph])
 }
@@ -193,11 +195,12 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), font
         (view as? WikiCompletingTextView)?.wikiProvider = block.usesMarkdown ? wikiProvider : nil
         guard !view.hasMarkedText() else { return }
         if !requestFocus { context.coordinator.requestedFocus = false }
-        if context.coordinator.lastData != block.rtf || context.coordinator.lastText != block.text || context.coordinator.fontSize != block.fontSize {
-            let cursor = min(view.selectedRange().location, block.text.utf16.count)
-            view.textStorage?.setAttributedString(attributed(block)); view.setSelectedRange(NSRange(location: cursor, length: 0))
+        if context.coordinator.lastData != block.rtf || context.coordinator.lastText != block.text || context.coordinator.fontSize != block.fontSize || context.coordinator.fontFamily != block.fontFamily {
+            let selection = view.selectedRange(), cursor = min(selection.location, block.text.utf16.count)
+            view.textStorage?.setAttributedString(attributed(block)); view.setSelectedRange(NSRange(location: cursor, length: min(selection.length, block.text.utf16.count - cursor)))
             context.coordinator.lastData = block.rtf; context.coordinator.lastText = block.text
             context.coordinator.fontSize = block.fontSize
+            context.coordinator.fontFamily = block.fontFamily
         }
         context.coordinator.measure()
         if requestFocus && editable && !context.coordinator.requestedFocus {
@@ -215,7 +218,7 @@ enum TextAction { case bold, italic, highlight, grow(Double), font(String), font
     }
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: RichTextEditor; var lastData: Data?; var lastText = ""
-        var fontSize = 0.0; var requestedFocus = false
+        var fontSize = 0.0; var fontFamily: String?; var requestedFocus = false
         var lastMeasurement: String?
         init(_ parent: RichTextEditor) { self.parent = parent }
         func textDidBeginEditing(_ notification: Notification) {

@@ -131,7 +131,10 @@ private struct SidebarDragPayload: Codable {
     let content: AnyView
     func makeNSView(context: Context) -> SidebarRowHost { SidebarRowHost(frame: .zero) }
     func updateNSView(_ view: SidebarRowHost, context: Context) {
-        view.store = store; view.pageID = pageID; view.host.rootView = content; view.host.frame = view.bounds
+        view.store = store; view.pageID = pageID
+        view.host.rootView = AnyView(content.environment(\.controlActiveState, context.environment.controlActiveState)
+            .environment(\.colorScheme, context.environment.colorScheme))
+        view.host.frame = view.bounds
     }
 }
 #endif

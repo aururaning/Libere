@@ -49,6 +49,19 @@ import MarginCore
     var editingBlockID: UUID? { store?.editingBlockID }
     var selectedBlockID: UUID? { store?.blockSelection }
     var pressedBlockID: UUID? { press?.blockID }
+    var allowsTouchSelection: Bool { store?.tool == .select || store?.tool == .text }
+    @discardableResult func selectFromTouch(at point: CGPoint) -> Bool {
+        guard let store, allowsTouchSelection else { return false }
+        cancel()
+        switch store.canvasHit(at: point) {
+        case .block(let id), .move(let id), .resize(let id):
+            // The editor or interactive preview keeps its own cursor/link tap.
+            if store.blockSelection == id, store.editingBlockID == id || store.interactingBlockID == id { return true }
+            store.selectBlock(id, keyboard: false)
+        default: store.tapCanvas(at: point)
+        }
+        return true
+    }
     var selectedScrollBlockID: UUID? {
         guard let store, let block = store.block, block.collapsed != true, block.kind != .formula,
               block.kind != .link || block.linkMode == .html || block.linkMode == .browser else { return nil }

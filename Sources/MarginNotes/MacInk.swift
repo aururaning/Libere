@@ -6,8 +6,9 @@ import PencilKit
 import MarginCore
 #endif
 
-/// Keep the Sidecar touch routing unchanged: only tablet events start a stroke.
-@MainActor final class TabletInkGesture: NSGestureRecognizer {
+/// Pencil/tablet input can arrive as mouse subtypes or as a pure tablet stream.
+/// Finger touches are left to the ancestor scroll view in both cases.
+@MainActor class TabletInkGesture: NSGestureRecognizer {
     private(set) var points: [PKStrokePoint] = []
     private(set) var creationDate = Date()
     var options = InkOptions()
@@ -17,9 +18,25 @@ import MarginCore
     private var windowPoint = NSPoint.zero
     private var priorCoalescing: Bool?
     private var pressure: CGFloat = 0.5
-    static func isTablet(_ event: NSEvent) -> Bool { event.type == .tabletPoint || event.subtype == .tabletPoint }
+    static func isTablet(_ event: NSEvent) -> Bool {
+        if event.type == .tabletPoint { return true }
+        if event.type == .tabletProximity {
+            return event.pointingDeviceType == .pen || event.pointingDeviceType == .eraser
+        }
+        guard [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .mouseMoved].contains(event.type) else { return false }
+        if event.subtype == .tabletPoint { return true }
+        if event.subtype == .tabletProximity { return event.pointingDeviceType == .pen || event.pointingDeviceType == .eraser }
+        return false
+    }
     override func mouseDown(with event: NSEvent) {
-        guard Self.isTablet(event), let view,
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.record("pen-mouse-down", event: event)
+        #endif
+        guard Self.isTablet(event) else { state = .failed; return }
+        beginStroke(event)
+    }
+    private func beginStroke(_ event: NSEvent) {
+        guard let view,
               !excludedRects.contains(where: { $0.contains(view.convert(event.locationInWindow, from: nil)) }) else { state = .failed; return }
         creationDate = Date(); startTime = event.timestamp; points = []; activeOptions = options
         pressure = max(0.08, CGFloat(event.pressure))
@@ -28,12 +45,27 @@ import MarginCore
         append(event); state = .began
     }
     override func mouseDragged(with event: NSEvent) { sample(event) }
-    override func tabletPoint(with event: NSEvent) { sample(event) }
+    override func tabletPoint(with event: NSEvent) {
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.record("pen-tablet-point", event: event, extra: ["state": state.rawValue])
+        #endif
+        guard Self.isTablet(event) else { return }
+        let contact = event.buttonMask.rawValue & 1 != 0 || event.pressure > 0
+        if state == .possible {
+            if contact { beginStroke(event) }
+        } else if state == .began || state == .changed {
+            if contact { sample(event) }
+            else { endStroke(event) }
+        }
+    }
     private func sample(_ event: NSEvent) {
         guard state == .began || state == .changed else { return }
         append(event); state = .changed
     }
     override func mouseUp(with event: NSEvent) {
+        endStroke(event)
+    }
+    private func endStroke(_ event: NSEvent) {
         guard state == .began || state == .changed else { return }
         append(event); restoreCoalescing(); state = .ended
     }
@@ -125,7 +157,9 @@ import MarginCore
     private lazy var pen: TabletInkGesture = {
         let gesture = TabletInkGesture(target: self, action: #selector(handlePen(_:)))
         gesture.allowedTouchTypes = []; gesture.delegate = self
-        if #available(macOS 27.0, *) { gesture.isCancellableByScrollGesture = true }
+        // A pen stroke is not a finger pan. Scroll arbitration must not cancel
+        // a valid Pencil stroke before the ink action receives its first sample.
+        if #available(macOS 27.0, *) { gesture.isCancellableByScrollGesture = false }
         return gesture
     }()
     override var isFlipped: Bool { true }
@@ -137,6 +171,9 @@ import MarginCore
         return super.hitTest(point)
     }
     func update(data: Data?, enabled: Bool, options: InkOptions = InkOptions(), excludedRects: [CGRect] = []) {
+        #if LIBERE_INPUT_TRACE
+        if pen.isEnabled != enabled { SidecarInputTrace.record("ink-enabled", extra: ["enabled": enabled, "width": bounds.width, "height": bounds.height]) }
+        #endif
         self.options = options; self.excludedRects = excludedRects
         pen.options = options; pen.excludedRects = excludedRects
         if !enabled && strokeSave != nil { finishStroke(); pen.isEnabled = false; return }
@@ -148,9 +185,17 @@ import MarginCore
             needsDisplay = true
         }
     }
-    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool { TabletInkGesture.isTablet(event) }
+    func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.record("pen-candidate", event: event, extra: ["accepted": TabletInkGesture.isTablet(event)])
+        #endif
+        return TabletInkGesture.isTablet(event)
+    }
     func gestureRecognizer(_ gestureRecognizer: NSGestureRecognizer, shouldReceive touch: NSTouch) -> Bool { false }
     @objc private func handlePen(_ gesture: TabletInkGesture) {
+        #if LIBERE_INPUT_TRACE
+        SidecarInputTrace.record("pen-action", extra: ["state": gesture.state.rawValue, "points": gesture.points.count])
+        #endif
         switch gesture.state {
         case .began, .changed, .ended:
             if strokeSave == nil { begin(); strokeSave = save; activeOptions = options; strokeExclusions = excludedRects }

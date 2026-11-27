@@ -19,8 +19,15 @@ private final class HTMLFixtureProtocol: URLProtocol {
 
 @main @MainActor struct NativeChecks {
     static func main() async throws {
+        setbuf(stdout, nil)
         precondition(Bundle.main.bundleIdentifier == "app.marginnotes.nativechecks", "Run through Scripts/check-native.sh so PencilKit has a bundle identifier")
         if CommandLine.arguments.contains("--sidebar-only") { _ = try runSidebarNativeChecks(); return }
+        if CommandLine.arguments.contains("--update32-only") {
+            _ = try runPenInputNativeChecks()
+            _ = try await runICloudDownloadNativeChecks()
+            _ = try await runUpdate32NativeChecks()
+            return
+        }
         if CommandLine.arguments.contains("--sidebar-clipboard-only") { _ = try await runSidebarClipboardNativeChecks(); _ = try await runSidebarNestingNativeChecks(); return }
         if CommandLine.arguments.contains("--scroll-regions-only") { _ = try await runScrollRegionNativeChecks(); return }
         if CommandLine.arguments.contains("--content-selection-only") { _ = try await runContentSelectionNativeChecks(); return }
@@ -516,6 +523,9 @@ private final class HTMLFixtureProtocol: URLProtocol {
         checks += try await runFolderOverviewUINativeChecks()
         checks += try await runNavigationNativeChecks()
         checks += try await runICloudFilesNativeChecks()
+        checks += try await runICloudDownloadNativeChecks()
+        checks += try await runUpdate32NativeChecks()
+        checks += try runPenInputNativeChecks()
         checks += try await runContentSelectionNativeChecks()
         checks += try runCanvasBatchNativeChecks()
         checks += try await runClipboardLinksNativeChecks()

@@ -11,7 +11,7 @@ if ! xcodebuild -version >/dev/null 2>&1; then
   fi
 fi
 xcodebuild -version
-xcrun --sdk iphonesimulator --show-sdk-path >/dev/null
+xcrun --sdk macosx --show-sdk-path >/dev/null
 # Keep intermediate metadata on the Mac temporary volume and final products on the project volume.
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/MarginNotes-check.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
@@ -31,16 +31,9 @@ if ! xcrun swift "${swift_args[@]}" >"$log" 2>&1; then
   fi
 fi
 tail -n 9 "$log"
-for platform in macosx iphonesimulator iphoneos; do
-  case "$platform" in
-    macosx) destination='generic/platform=macOS' ;;
-    iphonesimulator) destination='generic/platform=iOS Simulator' ;;
-    iphoneos) destination='generic/platform=iOS' ;;
-  esac
-  log="$PWD/.build/validation/$platform.log"
-  xcodebuild -project MarginNotes.xcodeproj -scheme MarginNotes -configuration Debug \
-    -destination "$destination" -derivedDataPath "$scratch/Xcode" \
-    SYMROOT="$PWD/.build/XcodeProducts" CODE_SIGNING_ALLOWED=NO build >"$log" 2>&1 \
-    || { tail -n 60 "$log"; exit 1; }
-  echo "$platform: $(tail -n 2 "$log" | head -n 1)"
-done
+log="$PWD/.build/validation/macosx.log"
+xcodebuild -project MarginNotes.xcodeproj -scheme MarginNotes -configuration Debug \
+  -destination 'generic/platform=macOS' -derivedDataPath "$scratch/Xcode" \
+  SYMROOT="$PWD/.build/XcodeProducts" CODE_SIGNING_ALLOWED=NO build >"$log" 2>&1 \
+  || { tail -n 60 "$log"; exit 1; }
+echo "macosx: $(tail -n 2 "$log" | head -n 1)"

@@ -169,7 +169,7 @@ struct NoteTree: Identifiable {
                             HStack(spacing: 5) {
                                 if item.hasChildren {
                                     SidebarDisclosureButton(pageID: item.note.id, title: item.note.title,
-                                        expanded: store.expandedPages.contains(item.note.id)) {
+                                        expanded: store.expandedPages.contains(item.note.id), selected: store.selection == item.note.id) {
                                         if store.expandedPages.contains(item.note.id) { store.expandedPages.remove(item.note.id) }
                                         else { store.expandedPages.insert(item.note.id) }
                                     }
@@ -267,6 +267,10 @@ struct NoteTree: Identifiable {
             if !note.isFolder {
                 Button { inspector.toggle() } label: { Image(systemName: "sidebar.right") }.buttonStyle(.plain).help("画布与批注设置")
             }
+            if note.isFolder {
+                Button("子文件夹", systemImage: "folder.badge.plus") { store.create(folder: true, parent: note.id) }
+                    .buttonStyle(.plain).help("新建子文件夹").accessibilityIdentifier("new-child-folder")
+            }
             Button("子页面", systemImage: "doc.badge.plus") { store.create(parent: note.id) }.buttonStyle(.plain).help("新建子页面")
         }.padding(.horizontal, 16).padding(.vertical, 10).background(.background)
     }
@@ -282,7 +286,10 @@ struct NoteTree: Identifiable {
             HStack(spacing: 13) {
                 ForEach(EditorTool.allCases, id: \.self) { tool in
                     Button { choose(tool) } label: {
-                        Label(tool.title, systemImage: tool.icon).font(.system(size: 12, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 7)
+                        Group {
+                            if tool == .text { Text(tool.title) }
+                            else { Label(tool.title, systemImage: tool.icon) }
+                        }.font(.system(size: 12, weight: .medium)).padding(.horizontal, 9).padding(.vertical, 7)
                             .background(store.tool == tool ? Palette.accent.opacity(0.12) : .clear, in: RoundedRectangle(cornerRadius: 7))
                     }.buttonStyle(.plain)
                 }

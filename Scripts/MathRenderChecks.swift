@@ -40,6 +40,14 @@ import WebKit
         希腊标识符 \(\alpha\beta+\mathrm{cm}\)。
 
         \[\begin{cases}x & \text{if }x>0\\0 & \text{otherwise}\end{cases}\]
+
+        | 运算 | 表达示例 |
+        | --- | --- |
+        | $\oplus$ / $\bigoplus$ | $\mathbf{h}_i=\bigoplus_{\ell=0}^{L_{\max}}\mathbf{h}_i^{(\ell)}$ |
+        | $\odot$ | $\mathbf{g}_i^{\mathrm{dst}}\odot\mathbf{x}$ |
+        | $\otimes_{\mathrm{CG}}$ | $\mathbf{h}_i\otimes_{\mathrm{CG}}Y(\hat{\mathbf{r}}_{ij})$ |
+        | $(\cdot)^\top$ | $\mathbf{a}^\top\mathbf{b}$ |
+        | $(\cdot)^\dagger$ | $\mathbf{B}^\dagger$ |
         """#
         web.loadHTMLString(Markdown.document(source, size: 22), baseURL: nil)
         for _ in 0..<200 where !delegate.finished { try await Task.sleep(nanoseconds: 50_000_000) }
@@ -49,8 +57,8 @@ import WebKit
         (() => ({math:Array.from(document.querySelectorAll('math')).map(e=>({display:e.getAttribute('display'),width:e.getBoundingClientRect().width,height:e.getBoundingClientRect().height,text:e.textContent})), errors:document.querySelectorAll('.math-error').length, tableCells:document.querySelectorAll('td').length, code:document.querySelector('code').textContent}))()
         """) as! [String: Any]
         let math = value["math"] as! [[String:Any]]
-        precondition(math.count == 8 && value["errors"] as? Int == 0)
-        precondition(value["tableCells"] as? Int == 2 && value["code"] as? String == "a|b")
+        precondition(math.count == 19 && value["errors"] as? Int == 0)
+        precondition(value["tableCells"] as? Int == 12 && value["code"] as? String == "a|b")
         for element in math { precondition((element["width"] as! NSNumber).doubleValue > 5 && (element["height"] as! NSNumber).doubleValue > 5) }
         let snapshot = try await web.takeSnapshot(configuration: nil)
         if let tiff = snapshot.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let png = bitmap.representation(using:.png,properties:[:]) {
@@ -67,6 +75,6 @@ import WebKit
         var report = value; report["textWidths"] = widths
         let data = try JSONSerialization.data(withJSONObject:report, options:[.prettyPrinted,.sortedKeys])
         try data.write(to: URL(fileURLWithPath:".build/validation/math-render.json"))
-        print("PASS: 8 formula layouts plus 3 text-spacing fixtures rendered in WebKit; table/code, inline/display and leading/trailing spaces preserved")
+        print("PASS: 19 formula layouts plus 3 text-spacing fixtures rendered in WebKit; tensor operators, table/code, inline/display and text spacing preserved")
     }
 }

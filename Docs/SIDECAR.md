@@ -1,44 +1,34 @@
-# 随航、触摸与 Pencil API
+# Mac 随航、触摸与 Pencil
 
-核对日期：2026-11-18。Apple 的 TN3212 明确说明，macOS 27 与 iPadOS 27 的随航扩展直接触摸使用 AppKit 手势识别器。触摸不经过普通 responder 链、`sendEvent` 或本地/全局事件监听器。
+当前范围：Libere 0.7.2 build32，2026-11-27。只维护 Mac 应用，iPad 用作随航屏幕和 Pencil 输入设备；不再开发原生 iPad 端。
 
-| 使用场景 | API | 本项目的使用 |
-| --- | --- | --- |
-| iPad 原生手写 | `PKCanvasView`、`.drawingPolicy = .pencilOnly` | 默认只让 Pencil 落笔；手指浏览 |
-| Mac 随航触摸 | `NSGestureRecognizer`、`allowedTouchTypes`、`NSScrollView` | 笔迹识别器不接收直接触摸，祖先滚动视图处理浏览 |
-| Mac 数位笔 | `NSEvent` 的 tablet point 事件/子类型、`pressure` | 将数位笔位置与压力转为 `PKStrokePoint` |
-| 跨平台手写数据 | `PKStrokePath`、`PKStroke`、`PKDrawing` | Mac 创建的笔画和 iPad 使用同一数据格式 |
-| 新 SwiftUI 输入分类 | `GestureInputKinds.pencil`、`.directTouch`、`.indirectTouch`、`.pointer` | macOS/iPadOS 27 可用于后续统一 SwiftUI 手势过滤；当前画笔仍使用 AppKit/PencilKit |
-| 滚动中止画笔 | `NSGestureRecognizer.isCancellableByScrollGesture` | macOS 27 上启用，并处理取消，不保存未结束笔画 |
+## 使用
 
-不能只通过压力大小判断是否为 Pencil：触控板也有压力事件。`pointingDeviceType` 只适用于 proximity 事件或其对应子类型；不能随意读取所有鼠标事件的此属性。本实现先过滤 tablet point 事件。
+把 Mac 的 Libere 窗口移到 iPad 随航屏幕。在「手写」模式用 Pencil 落笔，用手指滑动浏览；切回「选择」后，点内容块可切换选择，点空白取消选择。手写模式不再显示底部常驻提示。
 
-## 手势结构
+画笔、荧光笔、整笔橡皮、粗细和颜色均可设置。笔迹以 PencilKit 的 PKDrawing 保存，和内容块布局独立，不参与吸附或自动排版。
 
-手写时，透明覆盖层只拦截笔迹；它的祖先保留页面滚动视图。选择模式关闭覆盖层命中，恢复下方文字和 PDF 的操作。Apple 明确提示：覆盖在标准控件上方的透明视图会阻挡下方同级控件的手势，因此不能依靠“透明”实现触摸穿透。
+## 输入路径
 
-## 真机检查
+- MacInk 只接收明确的 tablet point 事件或鼠标事件的 tablet point 子类型。不能只看压力，因为触控板也有压力输入；proximity 属性只在对应事件类型中读取。
+- 纯 tablet 事件可开始、更新和结束笔画；兼容带 tablet 子类型的鼠标按下/拖动/抬起。笔识别器不接受手指直接触摸，也不由滚动识别器取消。
+- CanvasViewport 的独立直接触摸点击识别器处理手指点选，允许手指平移取消点击；它与鼠标/Pencil 路由分开。CanvasPointer 切换内容块或清除空白选择时清除过时的捕获状态，保留活动编辑器和链接的原生操作。
+- macOS 27 路径使用非排他的触摸策略，保留祖先滚动视图的浏览手势。较早系统按可用 API 运行，不虚构直接触摸能力。
+- 落笔期间暂时关闭 NSEvent 鼠标事件合并，完成/取消后恢复；不指定或承诺硬件采样率。笔迹使用 PencilKit 插值点绘制，已提交笔画缓存几何形状。
 
-1. 在 macOS 27 / iPadOS 27 连接随航，把 Mac App 移到 iPad，开启手写。
-2. Pencil 写线条；抬笔后应保存，重新打开笔迹仍在，位置保持页面坐标。
-3. 手指滑动应浏览页面，不产生笔迹；开始滚动时进行中的笔画可取消。
-4. 在 35%、85%、150% 缩放下跨文字和 PDF 写字，检查落点一致。
-5. 用画布撤销撤销最后一笔；通过备份或已配置的 iCloud 在 iPad 原生版打开，检查笔迹可由 PencilKit 编辑。
-6. 切回选择模式，确认文字可编辑、PDF 可翻页、资料把手可操作。
+## 本轮验收
 
-## 官方来源
+用户在独立测试应用中确认 Pencil 书写、手指浏览、点 A/B 切换与点空白取消选择「全部正常」。保存的绘图在测试应用重开后解码为23笔、1098点、29170字节。输入记录中的7次点击全部被处理，包含A、B和空白切换。
+
+自动回归包含笔事件分类、纯 tablet 生命周期、直接触摸与滚动分流。原始笔迹和输入日志只保留本地；LIBERE_INPUT_TRACE 仅编入隔离测试程序，正式二进制不包含它。更完整的证据与范围见 [VALIDATION-0.7.2.md](VALIDATION-0.7.2.md)。
+
+悬停、双击换工具、Pencil Pro 捏合及 Mac 完整套索仍未接入。其他硬件组合和所有缩放倍率不在本轮设备验收范围。
+
+## Apple 参考
 
 - [TN3212：随航触摸适配](https://developer.apple.com/documentation/technotes/tn3212-adopting-gesture-recognizers-for-sidecar-touch-support)
-- [SwiftUI GestureInputKinds](https://developer.apple.com/documentation/swiftui/gestureinputkinds)
 - [NSGestureRecognizer.allowedTouchTypes](https://developer.apple.com/documentation/appkit/nsgesturerecognizer/allowedtouchtypes)
-- [PencilKit pencilOnly](https://developer.apple.com/documentation/pencilkit/pkcanvasviewdrawingpolicy/pencilonly)
 - [NSEvent.pressure](https://developer.apple.com/documentation/appkit/nsevent/pressure)
 - [Apple 随航使用说明](https://support.apple.com/102597)
-
-原生矢量显示和笔画数据已有自动检查，真实随航手感仍需要按以上步骤在设备上复测。
-
-Mac 新版在笔下期间设置 `NSEvent.isMouseCoalescingEnabled = false`，结束/取消恢复之前设置；不指定或虚构硬件采样率。采用 `PKStrokePath.interpolatedPoints(in:by:)` 显示连续 B-spline，缓存已提交的几何形状。压感笔、均匀线条、荧光笔、整笔橡皮及粗细/颜色均可设置。iPad 继续支持系统 PencilKit 工具栏。
-
-新增参考：[Apple 事件合并说明](https://developer.apple.com/documentation/appkit/nsevent/ismousecoalescingenabled)、[WWDC：检查和修改 PencilKit 绘图](https://developer.apple.com/videos/play/wwdc2020/10148/)。
-
-悬停、双击换工具、Pencil Pro 捏合及 Mac 完整套索仍未接入。
+- [Apple 事件合并说明](https://developer.apple.com/documentation/appkit/nsevent/ismousecoalescingenabled)
+- [WWDC：检查和修改 PencilKit 绘图](https://developer.apple.com/videos/play/wwdc2020/10148/)
